@@ -2,9 +2,9 @@ spring:
   application:
     name: CloudFileSystem
   datasource:
-    url: jdbc:mysql://localhost:3306/cloud_file_system?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/cloud_file_database?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: root
-    password: root
+    password: 274581@friX
     driver-class-name: com.mysql.cj.jdbc.Driver
   data:
     redis:
@@ -12,5 +12,8 @@ spring:
       port: 6379
       database: 0
       timeout: 3000ms
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
 server:
   port: 8835

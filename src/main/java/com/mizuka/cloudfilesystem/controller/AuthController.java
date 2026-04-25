@@ -23,10 +23,29 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/auth")
 public class AuthController {
     
+    /**
+     * 健康检查接口
+     * 用于前端检测后端是否启动
+     * @return 简单的响应对象
+     */
+    @GetMapping("/health")
+    public ResponseEntity<String> healthCheck() {
+        return ResponseEntity.ok("Backend is running");
+    }
+    
     // 注入RedisTemplate用于操作Redis缓存
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
-    
+
+    // 注入安全问题服务
+    @Autowired
+    private com.mizuka.cloudfilesystem.service.SecurityQuestionService securityQuestionService;
+
+    // 注入用户服务
+    @Autowired
+    private com.mizuka.cloudfilesystem.service.UserService userService;
+
+
     // Redis中存储密钥对的key前缀
     private static final String RSA_KEY_PREFIX = "rsa:key:";
     
@@ -138,4 +157,48 @@ public class AuthController {
             );
         }
     }
+
+
+    /**
+     * 获取安全问题接口
+     * 返回所有安全问题的ID和内容，用于注册时选择
+     * @return 包含安全问题列表的响应对象
+     */
+    @GetMapping("/security-questions")
+    public ResponseEntity<com.mizuka.cloudfilesystem.dto.SecurityQuestionResponse> getSecurityQuestions() {
+        // 调用服务层获取所有安全问题
+        com.mizuka.cloudfilesystem.dto.SecurityQuestionResponse response = securityQuestionService.getAllQuestions();
+
+        // 根据响应结果返回相应的HTTP状态码
+        if (response.isSuccess()) {
+            return ResponseEntity.ok(response);
+        } else {
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+    /**
+     * 用户注册接口
+     * 接收前端发送的注册请求，解密密码并存入数据库
+     * @param registerRequest 注册请求对象
+     * @return 注册响应对象
+     */
+    @PostMapping("/register")
+    public ResponseEntity<com.mizuka.cloudfilesystem.dto.RegisterResponse> register(
+            @RequestBody com.mizuka.cloudfilesystem.dto.RegisterRequest registerRequest) {
+
+        // 调用服务层处理注册逻辑
+        com.mizuka.cloudfilesystem.dto.RegisterResponse response = userService.register(registerRequest);
+
+        // 根据响应结果返回相应的HTTP状态码
+        if (response.isSuccess()) {
+            return ResponseEntity.ok(response);
+        } else if (response.getCode() == 400) {
+            return ResponseEntity.badRequest().body(response);
+        } else {
+            return ResponseEntity.internalServerError().body(response);
+        }
+    }
+
+
 }
