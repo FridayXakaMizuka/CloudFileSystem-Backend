@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: CloudFileSystem
+  datasource:
+    url: jdbc:mysql://localhost:3306/cloud_file_system?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      timeout: 3000ms
+server:
+  port: 8835
