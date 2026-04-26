@@ -33,6 +33,7 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/api/auth/health",              // 健康检查
                     "/api/auth/rsa-key",             // 获取RSA公钥
+                      "/api/auth/is_rsa_valid",      // 验证RSA有效性
                     "/api/auth/register",            // 用户注册
                     "/api/auth/security-questions"   // 获取安全问题列表
                 ).permitAll()
