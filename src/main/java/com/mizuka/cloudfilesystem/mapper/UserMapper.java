@@ -43,4 +43,10 @@ public interface UserMapper {
      */
     @Select("SELECT * FROM users WHERE nickname = #{nickname}")
     User findByNickname(String nickname);
+
+    @Select("SELECT * FROM users WHERE id = #{id}")
+    User findById(Long id);
+
+    @Update("UPDATE users SET last_login_at = NOW() WHERE id = #{id}")
+    int updateLastLogin(Long id);
 }

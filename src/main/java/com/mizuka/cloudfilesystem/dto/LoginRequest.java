@@ -15,6 +15,9 @@ public class LoginRequest {
     // RSA加密后的密码
     private String encryptedPassword;
 
+    // 登录成功后，返回给前端的Token的过期时间
+    private Long tokenExpiration;
+
     public LoginRequest() {
     }
 
@@ -22,6 +25,13 @@ public class LoginRequest {
         this.sessionId = sessionId;
         this.userId = userId;
         this.encryptedPassword = encryptedPassword;
+    }
+
+    public LoginRequest(String sessionId, String userId, String encryptedPassword, Long tokenExpiration) {
+        this.sessionId = sessionId;
+        this.userId = userId;
+        this.encryptedPassword = encryptedPassword;
+        this.tokenExpiration = tokenExpiration;
     }
 
     public String getSessionId() {
@@ -47,4 +57,13 @@ public class LoginRequest {
     public void setEncryptedPassword(String encryptedPassword) {
         this.encryptedPassword = encryptedPassword;
     }
+
+    public Long getTokenExpiration() {
+        return tokenExpiration;
+    }
+
+    public void setTokenExpiration(Long tokenExpiration) {
+        this.tokenExpiration = tokenExpiration;
+    }
+
 }

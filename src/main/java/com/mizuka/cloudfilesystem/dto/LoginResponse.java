@@ -1,5 +1,7 @@
 package com.mizuka.cloudfilesystem.dto;
 
+import java.time.LocalDateTime;
+
 /**
  * 登录响应数据传输对象
  * 返回登录结果给前端
@@ -17,6 +19,27 @@ public class LoginResponse {
 
     // 用户ID（登录成功时返回）
     private String userId;
+
+    // 登录令牌（登录成功时返回）
+    private String token;
+
+    // 昵称（登录成功时返回）
+    private String nickname;
+
+    // 用户类型（登录成功时返回）
+    private String userType;
+
+    // 头像（登录成功时返回）
+    private String avatar;
+
+    // 主目录（登录成功时返回）
+    private String homeDirectory;
+
+    // 注册时间（登录成功时返回）
+    private LocalDateTime registeredAt;
+
+    // 过期时间（登录成功时返回）
+    private LocalDateTime expiresAt;
 
     public LoginResponse() {
     }
@@ -64,5 +87,61 @@ public class LoginResponse {
 
     public void setUserId(String userId) {
         this.userId = userId;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
+    }
+
+    public String getNickname() {
+        return nickname;
+    }
+
+    public void setNickname(String nickname) {
+        this.nickname = nickname;
+    }
+
+    public String getUserType() {
+        return userType;
+    }
+
+    public void setUserType(String userType) {
+        this.userType = userType;
+    }
+
+    public String getAvatar() {
+        return avatar;
+    }
+
+    public void setAvatar(String avatar) {
+        this.avatar = avatar;
+    }
+
+    public String getHomeDirectory() {
+        return homeDirectory;
+    }
+
+    public void setHomeDirectory(String homeDirectory) {
+        this.homeDirectory = homeDirectory;
+    }
+
+    public LocalDateTime getRegisteredAt() {
+        return registeredAt;
+    }
+
+    public void setRegisteredAt(LocalDateTime registeredAt) {
+        this.registeredAt = registeredAt;
+    }
+
+    public LocalDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(LocalDateTime expiresAt) {
+        this.expiresAt = expiresAt;
     }
 }

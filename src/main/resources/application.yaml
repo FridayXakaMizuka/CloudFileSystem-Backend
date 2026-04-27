@@ -17,3 +17,6 @@ mybatis:
     map-underscore-to-camel-case: true
 server:
   port: 8835
+jwt:
+  secret: CloudFileSystemDefaultSecretKeyForJWT2026MinimumLength64CharactersRequired
+  default-expiration: 604800

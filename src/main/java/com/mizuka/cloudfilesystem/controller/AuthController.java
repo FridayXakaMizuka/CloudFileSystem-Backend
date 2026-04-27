@@ -129,69 +129,52 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest loginRequest) {
         try {
-            // 从请求中获取会话ID
-            String sessionId = loginRequest.getSessionId();
-            
-            // 构建Redis中的key
-            String redisKey = RSA_KEY_PREFIX + sessionId;
-            
-            // 从Redis中获取密钥对对象
-            RSAKeyPairDTO keyPairDTO = (RSAKeyPairDTO) redisTemplate.opsForValue().get(redisKey);
-            
-            // 检查密钥对是否存在或已过期
-            if (keyPairDTO == null) {
-                logger.warn("[用户登录] 失败 - 会话已过期或无效, SessionId: {}", sessionId);
-                // 返回400错误码，表示请求参数错误或会话过期
-                return ResponseEntity.badRequest().body(
-                    new LoginResponse(400, false, "会话已过期或无效，请重新获取公钥")
-                );
+            logger.info("[用户登录] 请求 - UserId: {}, SessionId: {}",
+                    loginRequest.getUserId(), loginRequest.getSessionId());
+
+            LoginResponse response = userService.login(loginRequest);
+
+            if (response.isSuccess()) {
+                logger.info("[用户登录] 成功 - UserId: {}, UserType: {}",
+                        loginRequest.getUserId(), response.getUserType());
+
+                ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
+                        .httpOnly(true)
+                        .secure(false)
+                        .path("/")
+                        .maxAge(0)
+                        .sameSite("Lax")
+                        .build();
+
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                        .body(response);
+            } else {
+                logger.warn("[用户登录] 失败 - UserId: {}, 原因: {}",
+                        loginRequest.getUserId(), response.getMessage());
+
+                ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
+                        .httpOnly(true)
+                        .secure(false)
+                        .path("/")
+                        .maxAge(0)
+                        .sameSite("Lax")
+                        .build();
+
+                return ResponseEntity.status(response.getCode())
+                        .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                        .body(response);
             }
-            
-            // 获取加密的密码
-            String encryptedPassword = loginRequest.getEncryptedPassword();
-            
-            // 获取私钥
-            String privateKey = keyPairDTO.getPrivateKey();
-            
-            // 使用私钥解密密码
-            String decryptedPassword = RSAKeyManager.decryptWithPrivateKey(encryptedPassword, privateKey);
-            
-            // 打印解密后的密码（实际应用中应该与数据库中的密码进行比对）
-            System.out.println("用户ID: " + loginRequest.getUserId());
-            System.out.println("解密后的密码: " + decryptedPassword);
-            
-            // TODO: 在这里添加实际的登录验证逻辑
-            // 例如：查询数据库，验证用户ID和密码是否正确
-            
-            // 登录成功后，可以选择从Redis中删除该密钥对（一次性使用）
-            redisTemplate.delete(redisKey);
-            
-            logger.info("[用户登录] 成功 - UserId: {}", loginRequest.getUserId());
-            
-            // 创建清除Cookie的响应（因为密钥对已删除）
-            ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
-                .httpOnly(true)
-                .secure(false)
-                .path("/")
-                .maxAge(0)  // 立即过期，清除Cookie
-                .sameSite("Lax")
-                .build();
-            
-            // 返回200成功码和登录成功响应
-            return ResponseEntity.ok()
-                .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
-                .body(new LoginResponse(200, true, "登录成功", loginRequest.getUserId()));
-            
+
         } catch (Exception e) {
-            // 捕获解密异常或其他异常
-            logger.error("[用户登录] 失败 - {}", e.getMessage());
+            logger.error("[用户登录] 异常 - {}", e.getMessage());
             e.printStackTrace();
-            // 返回500错误码，表示服务器内部错误
             return ResponseEntity.internalServerError().body(
-                new LoginResponse(500, false, "登录失败：" + e.getMessage())
+                    new LoginResponse(500, false, "登录失败：" + e.getMessage())
             );
         }
     }
+
 
 
     /**
