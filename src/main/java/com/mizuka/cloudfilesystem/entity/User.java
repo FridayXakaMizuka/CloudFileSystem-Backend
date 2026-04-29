@@ -11,7 +11,7 @@ public class User {
     private Long id;                      // 用户ID（从10001开始）
     private String nickname;              // 用户昵称
     private String password;              // 密码（BCrypt加密）
-    private byte[] avatar;                // 头像图片
+    private String avatar;                // 头像图片路径（URL或Base64）
     private String email;                 // 邮箱地址
     private String phone;                 // 手机号码
     private Long storageQuota;            // 空间配额（字节），默认10GB
@@ -50,11 +50,11 @@ public class User {
         this.password = password;
     }
 
-    public byte[] getAvatar() {
+    public String getAvatar() {
         return avatar;
     }
 
-    public void setAvatar(byte[] avatar) {
+    public void setAvatar(String avatar) {
         this.avatar = avatar;
     }
 

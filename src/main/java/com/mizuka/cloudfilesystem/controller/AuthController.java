@@ -10,6 +10,7 @@ import com.mizuka.cloudfilesystem.dto.RSAValidationResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -26,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  * 处理用户认证相关的请求，包括获取RSA公钥和用户登录
  */
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/auth")
 public class AuthController {
     
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
@@ -40,10 +41,12 @@ public class AuthController {
     public ResponseEntity<String> healthCheck() {
         return ResponseEntity.ok("Backend is running");
     }
-    
-    // 注入RedisTemplate用于操作Redis缓存
+
+    // 注入RSA RedisTemplate用于操作RSA密钥对缓存（端口6379）
     @Autowired
+    @Qualifier("rsaRedisTemplate")
     private RedisTemplate<String, Object> redisTemplate;
+
 
     // 注入安全问题服务
     @Autowired

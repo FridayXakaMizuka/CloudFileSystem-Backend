@@ -49,4 +49,13 @@ public interface UserMapper {
 
     @Update("UPDATE users SET last_login_at = NOW() WHERE id = #{id}")
     int updateLastLogin(Long id);
+
+    /**
+     * 更新用户头像
+     * @param id 用户ID
+     * @param avatar 头像路径（Base64编码或文件路径）
+     * @return 影响的行数
+     */
+    @Update("UPDATE users SET avatar = #{avatar} WHERE id = #{id}")
+    int updateAvatar(@Param("id") Long id, @Param("avatar") String avatar);
 }

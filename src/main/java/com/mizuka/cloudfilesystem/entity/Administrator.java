@@ -7,7 +7,7 @@ public class Administrator {
     private Integer id;
     private String nickname;
     private String password;
-    private byte[] avatar;
+    private String avatar;                // 头像图片路径（URL或Base64）
     private String email;
     private String phone;
     private Integer status;
@@ -43,11 +43,11 @@ public class Administrator {
         this.password = password;
     }
 
-    public byte[] getAvatar() {
+    public String getAvatar() {
         return avatar;
     }
 
-    public void setAvatar(byte[] avatar) {
+    public void setAvatar(String avatar) {
         this.avatar = avatar;
     }
 

@@ -12,6 +12,13 @@ spring:
       port: 6379
       database: 0
       timeout: 3000ms
+# 头像缓存Redis配置（独立实例）
+avatar:
+  redis:
+    host: localhost
+    port: 6380
+    database: 0
+    timeout: 3000ms
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
@@ -20,3 +27,18 @@ server:
 jwt:
   secret: CloudFileSystemDefaultSecretKeyForJWT2026MinimumLength64CharactersRequired
   default-expiration: 604800
+# src/main/resources/application.yaml
+# 在现有配置后添加以下内容
+
+# 文件存储配置
+file:
+  storage:
+    type: local  # local 或 remote
+    local:
+      path: D:/CloudFileSystem/files  # 本地存储路径
+    remote:
+      host: 192.168.1.100  # 远程服务器地址
+      port: 22  # SSH 端口
+      username: fileuser  # SSH 用户名
+      password: your_password  # SSH 密码
+      path: /data/files  # 远程存储路径
