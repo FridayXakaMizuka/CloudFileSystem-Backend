@@ -15,7 +15,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
  * Redis配置类
  * 配置两个独立的Redis实例：
  * 1. rsaRedisTemplate - RSA临时缓存（端口6379）
- * 2. avatarRedisTemplate - 头像缓存（端口6380）
+ * 2. profileRedisTemplate - 个人资料缓存（端口6380）
  */
 @Configuration
 public class RedisConfig {
@@ -26,11 +26,11 @@ public class RedisConfig {
     @Value("${spring.data.redis.port:6379}")
     private int rsaRedisPort;
 
-    @Value("${avatar.redis.host:localhost}")
-    private String avatarRedisHost;
+    @Value("${profile.redis.host:localhost}")
+    private String profileRedisHost;
 
-    @Value("${avatar.redis.port:6380}")
-    private int avatarRedisPort;
+    @Value("${profile.redis.port:6380}")
+    private int profileRedisPort;
 
     /**
      * RSA临时缓存的Redis连接工厂（端口6379）
@@ -45,14 +45,14 @@ public class RedisConfig {
     }
 
     /**
-     * 头像缓存的Redis连接工厂（端口6380）
-     * 用于存储用户头像等数据
+     * 个人资料缓存的Redis连接工厂（端口6380）
+     * 用于存储用户个人资料等数据
      */
-    @Bean(name = "avatarRedisConnectionFactory")
-    public RedisConnectionFactory avatarRedisConnectionFactory() {
+    @Bean(name = "profileRedisConnectionFactory")
+    public RedisConnectionFactory profileRedisConnectionFactory() {
         RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
-        config.setHostName(avatarRedisHost);
-        config.setPort(avatarRedisPort);
+        config.setHostName(profileRedisHost);
+        config.setPort(profileRedisPort);
         return new LettuceConnectionFactory(config);
     }
 
@@ -93,21 +93,21 @@ public class RedisConfig {
     }
 
     /**
-     * 头像缓存的RedisTemplate
+     * 个人资料缓存的RedisTemplate
      * 使用String序列化器作为key和value
-     * 用于存储头像的Base64编码字符串
+     * 用于存储个人资料的JSON字符串
      */
-    @Bean(name = "avatarRedisTemplate")
-    public RedisTemplate<String, String> avatarRedisTemplate() {
+    @Bean(name = "profileRedisTemplate")
+    public RedisTemplate<String, String> profileRedisTemplate() {
         RedisTemplate<String, String> template = new RedisTemplate<>();
 
         // 设置连接工厂（使用6380端口）
-        template.setConnectionFactory(avatarRedisConnectionFactory());
+        template.setConnectionFactory(profileRedisConnectionFactory());
 
         // 设置key的序列化器为String类型
         template.setKeySerializer(new StringRedisSerializer());
 
-        // 设置value的序列化器也为String类型（因为头像直接存储Base64字符串）
+        // 设置value的序列化器也为String类型（存储JSON字符串）
         template.setValueSerializer(new StringRedisSerializer());
 
         // 设置hash key的序列化器

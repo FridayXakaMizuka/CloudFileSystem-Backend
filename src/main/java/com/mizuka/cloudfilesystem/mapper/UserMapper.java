@@ -58,4 +58,40 @@ public interface UserMapper {
      */
     @Update("UPDATE users SET avatar = #{avatar} WHERE id = #{id}")
     int updateAvatar(@Param("id") Long id, @Param("avatar") String avatar);
+
+    /**
+     * 更新用户密码
+     * @param id 用户ID
+     * @param password BCrypt加密后的密码
+     * @return 影响的行数
+     */
+    @Update("UPDATE users SET password = #{password} WHERE id = #{id}")
+    int updatePassword(@Param("id") Long id, @Param("password") String password);
+
+    /**
+     * 更新用户昵称
+     * @param id 用户ID
+     * @param nickname 新昵称
+     * @return 影响的行数
+     */
+    @Update("UPDATE users SET nickname = #{nickname} WHERE id = #{id}")
+    int updateNickname(@Param("id") Long id, @Param("nickname") String nickname);
+
+    /**
+     * 更新用户邮箱
+     * @param id 用户ID
+     * @param email 新邮箱
+     * @return 影响的行数
+     */
+    @Update("UPDATE users SET email = #{email} WHERE id = #{id}")
+    int updateEmail(@Param("id") Long id, @Param("email") String email);
+
+    /**
+     * 更新用户手机号
+     * @param id 用户ID
+     * @param phone 新手机号
+     * @return 影响的行数
+     */
+    @Update("UPDATE users SET phone = #{phone} WHERE id = #{id}")
+    int updatePhone(@Param("id") Long id, @Param("phone") String phone);
 }

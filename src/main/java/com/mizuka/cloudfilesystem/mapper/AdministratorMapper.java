@@ -23,4 +23,22 @@ public interface AdministratorMapper {
      */
     @Update("UPDATE administrators SET avatar = #{avatar} WHERE id = #{id}")
     int updateAvatar(@Param("id") Integer id, @Param("avatar") String avatar);
+
+    /**
+     * 更新管理员密码
+     * @param id 管理员ID
+     * @param password BCrypt加密后的密码
+     * @return 影响的行数
+     */
+    @Update("UPDATE administrators SET password = #{password} WHERE id = #{id}")
+    int updatePassword(@Param("id") Integer id, @Param("password") String password);
+
+    /**
+     * 更新管理员昵称
+     * @param id 管理员ID
+     * @param nickname 新昵称
+     * @return 影响的行数
+     */
+    @Update("UPDATE administrators SET nickname = #{nickname} WHERE id = #{id}")
+    int updateNickname(@Param("id") Integer id, @Param("nickname") String nickname);
 }

@@ -1,7 +1,19 @@
 package com.mizuka.cloudfilesystem.controller;
 
 import com.mizuka.cloudfilesystem.dto.AvatarResponse;
+import com.mizuka.cloudfilesystem.dto.NicknameChangeRequest;
+import com.mizuka.cloudfilesystem.dto.NicknameChangeResponse;
+import com.mizuka.cloudfilesystem.dto.PasswordChangeRequest;
+import com.mizuka.cloudfilesystem.dto.PasswordChangeResponse;
+import com.mizuka.cloudfilesystem.dto.PasswordVerificationRequest;
+import com.mizuka.cloudfilesystem.dto.PasswordVerificationResponse;
+import com.mizuka.cloudfilesystem.dto.UserProfileResponse;
+import com.mizuka.cloudfilesystem.dto.EmailChangeRequest;
+import com.mizuka.cloudfilesystem.dto.EmailChangeResponse;
+import com.mizuka.cloudfilesystem.dto.PhoneChangeRequest;
+import com.mizuka.cloudfilesystem.dto.PhoneChangeResponse;
 import com.mizuka.cloudfilesystem.service.AvatarService;
+import com.mizuka.cloudfilesystem.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +35,9 @@ public class ProfileController {
 
     @Autowired
     private AvatarService avatarService;
+
+    @Autowired
+    private UserService userService;
 
     /**
      * 获取用户头像
@@ -124,6 +139,286 @@ public class ProfileController {
             error.put("success", false);
             error.put("message", "服务器内部错误：" + e.getMessage());
             return ResponseEntity.internalServerError().body(error);
+        }
+    }
+
+    /**
+     * 验证用户原密码是否正确
+     * POST /api/profile/password/is_initial_correct
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @param request 密码验证请求对象
+     * @return 密码验证响应对象
+     */
+    @PostMapping("/password/is_initial_correct")
+    public ResponseEntity<PasswordVerificationResponse> verifyInitialPassword(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody PasswordVerificationRequest request) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[验证原密码] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new PasswordVerificationResponse(401, false, "未提供有效的认证令牌")
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[验证原密码] 请求收到");
+
+            // 调用服务层验证密码
+            PasswordVerificationResponse response = userService.verifyInitialPassword(token, request);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[验证原密码] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[验证原密码] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(response.getCode()).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[验证原密码] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new PasswordVerificationResponse(500, false, "服务器内部错误：" + e.getMessage())
+            );
+        }
+    }
+
+    /**
+     * 获取用户所有个人信息
+     * POST /api/profile/get_all
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @return 用户个人信息响应对象
+     */
+    @PostMapping("/get_all")
+    public ResponseEntity<UserProfileResponse> getAllProfile(
+            @RequestHeader("Authorization") String authHeader) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[获取个人资料] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new UserProfileResponse(401, false, "未提供有效的认证令牌", null)
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[获取个人资料] 请求收到");
+
+            // 调用服务层获取个人资料
+            UserProfileResponse response = userService.getAllProfile(token);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[获取个人资料] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[获取个人资料] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(response.getCode()).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[获取个人资料] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new UserProfileResponse(500, false, "服务器内部错误：" + e.getMessage(), null)
+            );
+        }
+    }
+
+    /**
+     * 修改用户密码
+     * POST /api/profile/password/set
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @param request 修改密码请求对象
+     * @return 修改密码响应对象
+     */
+    @PostMapping("/password/set")
+    public ResponseEntity<PasswordChangeResponse> changePassword(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody PasswordChangeRequest request) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[修改密码] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new PasswordChangeResponse(401, false, "未提供有效的认证令牌")
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[修改密码] 请求收到");
+
+            // 调用服务层修改密码
+            PasswordChangeResponse response = userService.changePassword(token, request);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[修改密码] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[修改密码] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(response.getCode()).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[修改密码] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new PasswordChangeResponse(500, false, "服务器内部错误：" + e.getMessage())
+            );
+        }
+    }
+
+    /**
+     * 修改用户昵称
+     * POST /api/profile/nickname/set
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @param request 修改昵称请求对象
+     * @return 修改昵称响应对象
+     */
+    @PostMapping("/nickname/set")
+    public ResponseEntity<NicknameChangeResponse> changeNickname(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody NicknameChangeRequest request) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[修改昵称] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new NicknameChangeResponse(401, false, "未提供有效的认证令牌", null)
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[修改昵称] 请求收到");
+
+            // 调用服务层修改昵称
+            NicknameChangeResponse response = userService.changeNickname(token, request);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[修改昵称] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[修改昵称] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(response.getCode()).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[修改昵称] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new NicknameChangeResponse(500, false, "服务器内部错误：" + e.getMessage(), null)
+            );
+        }
+    }
+
+    /**
+     * 修改用户邮箱
+     * POST /profile/email/set
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @param request 修改邮箱请求对象
+     * @return 修改邮箱响应对象
+     */
+    @PostMapping("/email/set")
+    public ResponseEntity<EmailChangeResponse> changeEmail(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody EmailChangeRequest request) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[修改邮箱] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new EmailChangeResponse(401, false, "未提供有效的认证令牌")
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[修改邮箱] 请求收到");
+
+            // 调用服务层修改邮箱
+            EmailChangeResponse response = userService.changeEmail(token, request);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[修改邮箱] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[修改邮箱] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(response.getCode()).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[修改邮箱] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new EmailChangeResponse(500, false, "服务器内部错误：" + e.getMessage())
+            );
+        }
+    }
+
+    /**
+     * 修改用户手机号
+     * POST /profile/phone/set
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @param request 修改手机号请求对象
+     * @return 修改手机号响应对象
+     */
+    @PostMapping("/phone/set")
+    public ResponseEntity<PhoneChangeResponse> changePhone(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody PhoneChangeRequest request) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[修改手机号] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new PhoneChangeResponse(401, false, "未提供有效的认证令牌")
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[修改手机号] 请求收到");
+
+            // 调用服务层修改手机号
+            PhoneChangeResponse response = userService.changePhone(token, request);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[修改手机号] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[修改手机号] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(response.getCode()).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[修改手机号] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new PhoneChangeResponse(500, false, "服务器内部错误：" + e.getMessage())
+            );
         }
     }
 }

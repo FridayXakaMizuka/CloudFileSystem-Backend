@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Base64;
 import java.util.Date;
 
@@ -35,7 +37,7 @@ public class JwtUtil {
     }
 
     public String generateToken(Long userId, String nickname, String userType,
-                                Long expirationSeconds) {
+                                LocalDateTime registeredAt, Long expirationSeconds) {
 
         long expSeconds = (expirationSeconds != null && expirationSeconds > 0)
                 ? expirationSeconds : defaultExpiration;
@@ -48,6 +50,8 @@ public class JwtUtil {
                 .claim("userId", userId)
                 .claim("nickname", nickname)
                 .claim("userType", userType)
+                .claim("registeredAt", registeredAt != null ? 
+                    registeredAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() : null)
                 .claim("homeDirectory", "user".equals(userType) ? "/users/" + userId : "/admin/")
                 .issuedAt(now)
                 .expiration(expiryDate)
@@ -80,5 +84,65 @@ public class JwtUtil {
     public Long getUserIdFromToken(String token) {
         Claims claims = parseToken(token);
         return claims.get("userId", Long.class);
+    }
+
+    /**
+     * 生成重置密码临时令牌（resetToken）
+     * @param userId 用户ID
+     * @param verifiedBy 验证方式（email/phone/security）
+     * @param email 邮箱（可选）
+     * @param phone 手机号（可选）
+     * @param expirationSeconds 有效期（秒），默认600秒（10分钟）
+     * @return JWT令牌
+     */
+    public String generateResetToken(Long userId, String verifiedBy, String email, String phone, Long expirationSeconds) {
+        long expSeconds = (expirationSeconds != null && expirationSeconds > 0) ? expirationSeconds : 600;
+
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + expSeconds * 1000);
+
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("userId", userId)
+                .claim("verifiedBy", verifiedBy)
+                .claim("email", email)
+                .claim("phone", phone)
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    /**
+     * 验证并解析resetToken
+     * @param token JWT令牌
+     * @return Claims对象
+     * @throws IllegalArgumentException 如果令牌无效或过期
+     */
+    public Claims validateResetToken(String token) {
+        if (token == null || token.trim().isEmpty()) {
+            throw new IllegalArgumentException("令牌不能为空");
+        }
+
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(getSigningKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+
+            // 检查是否包含必要的字段
+            if (claims.get("userId") == null) {
+                throw new IllegalArgumentException("无效的令牌格式");
+            }
+
+            return claims;
+        } catch (io.jsonwebtoken.ExpiredJwtException e) {
+            logger.warn("[resetToken验证] 令牌已过期");
+            throw new IllegalArgumentException("验证令牌已过期");
+        } catch (Exception e) {
+            logger.error("[resetToken验证] 失败 - {}", e.getMessage());
+            throw new IllegalArgumentException("验证令牌无效");
+        }
     }
 }

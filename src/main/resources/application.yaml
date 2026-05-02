@@ -12,8 +12,25 @@ spring:
       port: 6379
       database: 0
       timeout: 3000ms
-# 头像缓存Redis配置（独立实例）
-avatar:
+  # 邮件配置
+  mail:
+    host: smtp.qq.com  # SMTP服务器地址，例如：smtp.qq.com, smtp.163.com
+    port: 587  # SMTP端口（SSL: 465, TLS: 587）
+    username: 467915465@qq.com  # 发件人邮箱
+    password: yetjlijzlriucbcd  # 邮箱授权码或密码
+    protocol: smtp
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          ssl:
+            trust: smtp.qq.com  # 信任的SMTP服务器
+# 个人资料缓存Redis配置（独立实例）
+profile:
   redis:
     host: localhost
     port: 6380
@@ -24,6 +41,16 @@ mybatis:
     map-underscore-to-camel-case: true
 server:
   port: 8835
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.mizuka.cloudfilesystem: DEBUG
+    com.mizuka.cloudfilesystem.service.UserService: DEBUG
+    com.mizuka.cloudfilesystem.controller.ProfileController: DEBUG
+
+
 jwt:
   secret: CloudFileSystemDefaultSecretKeyForJWT2026MinimumLength64CharactersRequired
   default-expiration: 604800
@@ -42,3 +69,13 @@ file:
       username: fileuser  # SSH 用户名
       password: your_password  # SSH 密码
       path: /data/files  # 远程存储路径
+
+# 短信配置
+aliyun:
+  sms:
+    region: cn-shenzhen
+    endpoint: dypnsapi.aliyuncs.com
+    sign-name: 速通互联验证码
+    template-code: 100005
+    access-key-id: ${ALIYUN_ACCESS_KEY_ID}
+    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET}

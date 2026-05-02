@@ -32,8 +32,8 @@ public class AvatarService {
     private AdministratorMapper administratorMapper;
 
     @Autowired
-    @Qualifier("avatarRedisTemplate")
-    private RedisTemplate<String, String> avatarRedisTemplate;
+    @Qualifier("profileRedisTemplate")
+    private RedisTemplate<String, String> profileRedisTemplate;
 
     @Autowired
     private com.mizuka.cloudfilesystem.util.JwtUtil jwtUtil;
@@ -62,14 +62,14 @@ public class AvatarService {
             String cacheKey = AVATAR_CACHE_PREFIX + userId;
 
             // 3. 尝试从Redis缓存获取头像（使用6380端口）
-            String cachedAvatar = avatarRedisTemplate.opsForValue().get(cacheKey);
+            String cachedAvatar = profileRedisTemplate.opsForValue().get(cacheKey);
             if (cachedAvatar != null) {
                 logger.info("[获取头像] 缓存命中 - UserId: {}", userId);
 
                 // 更新缓存有效期（与JWT令牌剩余有效期一致）
                 long remainingSeconds = getRemainingTokenExpiration(token);
                 if (remainingSeconds > 0) {
-                    avatarRedisTemplate.expire(cacheKey, remainingSeconds, TimeUnit.SECONDS);
+                    profileRedisTemplate.expire(cacheKey, remainingSeconds, TimeUnit.SECONDS);
                     logger.debug("[获取头像] 更新缓存过期时间 - UserId: {}, 剩余时间: {}秒", userId, remainingSeconds);
                 }
 
@@ -100,11 +100,11 @@ public class AvatarService {
             if (avatarUrl != null) {
                 long expirationSeconds = getRemainingTokenExpiration(token);
                 if (expirationSeconds > 0) {
-                    avatarRedisTemplate.opsForValue().set(cacheKey, avatarUrl, expirationSeconds, TimeUnit.SECONDS);
+                    profileRedisTemplate.opsForValue().set(cacheKey, avatarUrl, expirationSeconds, TimeUnit.SECONDS);
                     logger.info("[获取头像] 缓存已设置 - UserId: {}, 过期时间: {}秒", userId, expirationSeconds);
                 } else {
                     // 如果无法获取剩余时间，使用默认7天
-                    avatarRedisTemplate.opsForValue().set(cacheKey, avatarUrl, 7, TimeUnit.DAYS);
+                    profileRedisTemplate.opsForValue().set(cacheKey, avatarUrl, 7, TimeUnit.DAYS);
                     logger.info("[获取头像] 缓存已设置（默认7天） - UserId: {}", userId);
                 }
             }
@@ -179,24 +179,53 @@ public class AvatarService {
                 throw new RuntimeException("更新头像失败，用户不存在");
             }
 
-            // 3. 更新Redis中的头像缓存（如果存在）
-            String cacheKey = AVATAR_CACHE_PREFIX + userId;
-            String cachedAvatar = avatarRedisTemplate.opsForValue().get(cacheKey);
+            // 3. 更新Redis中的头像缓存
+            String avatarCacheKey = AVATAR_CACHE_PREFIX + userId;
             
-            if (cachedAvatar != null) {
-                // 缓存存在，更新为新头像
-                long remainingSeconds = getRemainingTokenExpiration(token);
-                if (remainingSeconds > 0) {
-                    avatarRedisTemplate.opsForValue().set(cacheKey, avatarUrl, remainingSeconds, TimeUnit.SECONDS);
-                    logger.info("[设置头像] Redis缓存已更新 - UserId: {}, 剩余时间: {}秒", userId, remainingSeconds);
-                } else {
-                    // 如果无法获取剩余时间，使用默认7天
-                    avatarRedisTemplate.opsForValue().set(cacheKey, avatarUrl, 7, TimeUnit.DAYS);
-                    logger.info("[设置头像] Redis缓存已更新（默认7天） - UserId: {}", userId);
+            // 无论缓存是否存在，都更新为新头像（遵循缓存双写一致性原则）
+            long remainingSeconds = getRemainingTokenExpiration(token);
+            if (remainingSeconds > 0) {
+                profileRedisTemplate.opsForValue().set(avatarCacheKey, avatarUrl, remainingSeconds, TimeUnit.SECONDS);
+                logger.info("[设置头像] 头像缓存已更新 - UserId: {}, Key: {}, 剩余时间: {}秒", userId, avatarCacheKey, remainingSeconds);
+            } else {
+                // 如果无法获取剩余时间，使用默认7天
+                profileRedisTemplate.opsForValue().set(avatarCacheKey, avatarUrl, 7, TimeUnit.DAYS);
+                logger.info("[设置头像] 头像缓存已更新（默认7天） - UserId: {}, Key: {}", userId, avatarCacheKey);
+            }
+            
+            // 4. 同步更新Redis中的个人资料缓存
+            String profileCacheKey = "profile:" + userId;
+            String cachedProfile = profileRedisTemplate.opsForValue().get(profileCacheKey);
+            
+            if (cachedProfile != null) {
+                try {
+                    // 解析缓存的JSON数据
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    com.mizuka.cloudfilesystem.dto.UserProfileResponse.UserData userData = 
+                        mapper.readValue(cachedProfile, com.mizuka.cloudfilesystem.dto.UserProfileResponse.UserData.class);
+                    
+                    // 更新头像字段
+                    userData.setAvatar(avatarUrl);
+                    
+                    // 将更新后的数据重新存入Redis（保持原有的过期时间）
+                    Long remainingTtl = profileRedisTemplate.getExpire(profileCacheKey, TimeUnit.SECONDS);
+                    if (remainingTtl != null && remainingTtl > 0) {
+                        String updatedJson = mapper.writeValueAsString(userData);
+                        profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, remainingTtl, TimeUnit.SECONDS);
+                        logger.info("[设置头像] 个人资料缓存已同步更新 - UserId: {}, 新头像: {}, 剩余TTL: {}秒", userId, avatarUrl, remainingTtl);
+                    } else {
+                        // 如果无法获取剩余时间，使用默认7天
+                        String updatedJson = mapper.writeValueAsString(userData);
+                        profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, 7, TimeUnit.DAYS);
+                        logger.info("[设置头像] 个人资料缓存已同步更新（默认7天） - UserId: {}, 新头像: {}", userId, avatarUrl);
+                    }
+                } catch (Exception e) {
+                    logger.warn("[设置头像] 个人资料缓存同步更新失败，将删除缓存 - {}", e.getMessage());
+                    // 如果更新失败，则删除缓存
+                    profileRedisTemplate.delete(profileCacheKey);
                 }
             } else {
-                // 缓存不存在，不预加载，等待下次获取时再缓存
-                logger.debug("[设置头像] Redis缓存不存在，将在下次获取时缓存 - UserId: {}", userId);
+                logger.debug("[设置头像] 个人资料缓存不存在，无需更新 - UserId: {}", userId);
             }
             
             logger.info("[设置头像] 成功 - UserId: {}, UserType: {}, AvatarUrl: {}", 

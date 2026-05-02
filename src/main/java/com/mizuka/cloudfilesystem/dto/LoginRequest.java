@@ -9,27 +9,27 @@ public class LoginRequest {
     // 会话ID，用于从Redis中获取对应的密钥对
     private String sessionId;
 
-    // 用户ID
-    private String userId;
+    // 用户ID或邮箱
+    private String userIdOrEmail;
 
     // RSA加密后的密码
     private String encryptedPassword;
 
-    // 登录成功后，返回给前端的Token的过期时间
+    // 登录成功后，返回给前端的Token的过期时间（秒），默认7天（604800秒）
     private Long tokenExpiration;
 
     public LoginRequest() {
     }
 
-    public LoginRequest(String sessionId, String userId, String encryptedPassword) {
+    public LoginRequest(String sessionId, String userIdOrEmail, String encryptedPassword) {
         this.sessionId = sessionId;
-        this.userId = userId;
+        this.userIdOrEmail = userIdOrEmail;
         this.encryptedPassword = encryptedPassword;
     }
 
-    public LoginRequest(String sessionId, String userId, String encryptedPassword, Long tokenExpiration) {
+    public LoginRequest(String sessionId, String userIdOrEmail, String encryptedPassword, Long tokenExpiration) {
         this.sessionId = sessionId;
-        this.userId = userId;
+        this.userIdOrEmail = userIdOrEmail;
         this.encryptedPassword = encryptedPassword;
         this.tokenExpiration = tokenExpiration;
     }
@@ -42,12 +42,12 @@ public class LoginRequest {
         this.sessionId = sessionId;
     }
 
-    public String getUserId() {
-        return userId;
+    public String getUserIdOrEmail() {
+        return userIdOrEmail;
     }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
+    public void setUserIdOrEmail(String userIdOrEmail) {
+        this.userIdOrEmail = userIdOrEmail;
     }
 
     public String getEncryptedPassword() {

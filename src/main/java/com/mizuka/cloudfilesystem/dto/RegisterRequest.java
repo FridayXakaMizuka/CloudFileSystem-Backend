@@ -18,7 +18,9 @@ public class RegisterRequest {
     public static class RegisterData {
         private String nickname;      // 昵称
         private String email;         // 邮箱
-        private String phone;         // 手机号
+        private String emailVfCode;   // 邮箱验证码
+        private String phone;         // 手机号（非必填）
+        private String phoneVfCode;   // 手机验证码
         private String encryptedPassword;  // RSA加密后的密码
         private Integer securityQuestion;  // 安全问题ID
         private String securityAnswer;     // 安全问题答案
@@ -43,12 +45,28 @@ public class RegisterRequest {
             this.email = email;
         }
 
+        public String getEmailVfCode() {
+            return emailVfCode;
+        }
+
+        public void setEmailVfCode(String emailVfCode) {
+            this.emailVfCode = emailVfCode;
+        }
+
         public String getPhone() {
             return phone;
         }
 
         public void setPhone(String phone) {
             this.phone = phone;
+        }
+
+        public String getPhoneVfCode() {
+            return phoneVfCode;
+        }
+
+        public void setPhoneVfCode(String phoneVfCode) {
+            this.phoneVfCode = phoneVfCode;
         }
 
         public String getEncryptedPassword() {

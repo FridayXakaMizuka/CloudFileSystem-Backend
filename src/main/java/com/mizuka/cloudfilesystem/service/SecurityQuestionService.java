@@ -58,4 +58,23 @@ public class SecurityQuestionService {
             );
         }
     }
+
+    /**
+     * 根据ID获取安全问题文本
+     * @param questionId 问题ID
+     * @return 问题文本，如果不存在则返回null
+     */
+    public String getQuestionTextById(Integer questionId) {
+        if (questionId == null) {
+            return null;
+        }
+        
+        try {
+            SecurityQuestion question = securityQuestionMapper.selectById(questionId);
+            return question != null ? question.getQuestionText() : null;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
 }

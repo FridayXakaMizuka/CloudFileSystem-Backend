@@ -32,7 +32,7 @@ public class FileController {
 
     /**
      * 初始化上传任务（检查秒传）
-     * POST /api/file/upload/init
+     * POST /file/upload/init
      */
     @PostMapping("/upload/init")
     public ResponseEntity<FileUploadResponse> initUpload(
