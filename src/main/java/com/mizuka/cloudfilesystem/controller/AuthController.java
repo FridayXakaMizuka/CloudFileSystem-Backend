@@ -19,10 +19,13 @@ import com.mizuka.cloudfilesystem.dto.ResetPasswordSecurityVerifyRequest;
 import com.mizuka.cloudfilesystem.dto.ResetPasswordVerifyResponse;
 import com.mizuka.cloudfilesystem.dto.ResetPasswordRequest;
 import com.mizuka.cloudfilesystem.dto.ResetPasswordResponse;
+import com.mizuka.cloudfilesystem.dto.TwoFactorVerifyRequest;
+import com.mizuka.cloudfilesystem.dto.TwoFactorVerifyResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -77,6 +80,19 @@ public class AuthController {
     // 注入短信验证码服务
     @Autowired
     private com.mizuka.cloudfilesystem.service.SmsVerificationService smsVerificationService;
+
+    // 注入二次验证服务
+    @Autowired
+    private com.mizuka.cloudfilesystem.service.TwoFactorAuthService twoFactorAuthService;
+
+    // 注入JWT工具类
+    @Autowired
+    private com.mizuka.cloudfilesystem.util.JwtUtil jwtUtil;
+
+    // 注入二次验证RedisTemplate
+    //@Autowired
+    //@Qualifier("twoFactorRedisTemplate")
+    //private RedisTemplate<String, Object> twoFactorRedisTemplate;
 
 
     // Redis中存储密钥对的key前缀
@@ -228,62 +244,168 @@ public class AuthController {
 
     /**
      * 用户登录接口
-     * 接收前端发送的登录请求，从Redis中获取私钥，解密密码
+     * 接收前端发送的登录请求，从 Redis中获取私钥，解密密码
      * @param loginRequest 登录请求对象，包含会话ID、用户ID和加密密码
      * @return 登录响应对象
      */
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest loginRequest) {
+    public ResponseEntity<LoginResponse> login(
+            @RequestBody LoginRequest loginRequest,
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @RequestHeader(value = "X-Client-Identifier", required = false) String clientIdentifier,
+            @RequestHeader(value = "X-Client-Platform", required = false) String clientPlatform,
+            @RequestHeader(value = "X-Electron-Version", required = false) String electronVersion,
+            @RequestHeader(value = "X-Browser-Type", required = false) String browserType,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint,
+            @RequestHeader(value = "X-Hardware-Id", required = false) String hardwareId,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
         try {
-            logger.info("[用户登录] 请求 - UserIdOrEmail: {}, SessionId: {}",
-                    loginRequest.getUserIdOrEmail(), loginRequest.getSessionId());
-
+            logger.info("[用户登录] 请求 - UserIdOrEmail: {}, SessionId: {}, ClientType: {}",
+                    loginRequest.getUserIdOrEmail(), loginRequest.getSessionId(), clientType);
+    
+            // 1. 验证用户凭证
             LoginResponse response = userService.login(loginRequest);
-
-            if (response.isSuccess()) {
-                logger.info("[用户登录] 成功 - UserIdOrEmail: {}, UserType: {}",
-                        loginRequest.getUserIdOrEmail(), response.getUserType());
-
-                // 重置sessionId的有效期为300秒
-                String redisKey = RSA_KEY_PREFIX + loginRequest.getSessionId();
-                redisTemplate.expire(redisKey, 300, TimeUnit.SECONDS);
-                logger.debug("[用户登录] 已重置SessionId有效期 - SessionId: {}, TTL: 300秒", loginRequest.getSessionId());
-
-                ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
-                        .httpOnly(true)
-                        .secure(false)
-                        .path("/")
-                        .maxAge(0)
-                        .sameSite("Lax")
-                        .build();
-
-                return ResponseEntity.ok()
-                        .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
-                        .body(response);
-            } else {
+    
+            if (!response.isSuccess()) {
                 logger.warn("[用户登录] 失败 - UserIdOrEmail: {}, 原因: {}",
                         loginRequest.getUserIdOrEmail(), response.getMessage());
-
+    
                 ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
                         .httpOnly(true)
-                        .secure(false)
+                        .secure(true)  // HTTPS环境下必须设置为true
                         .path("/")
                         .maxAge(0)
                         .sameSite("Lax")
                         .build();
-
+    
                 return ResponseEntity.status(response.getCode())
                         .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
                         .body(response);
             }
-
+    
+            // 2. 登录成功，判断是否需要二次验证
+            Long userId = Long.parseLong(response.getUserId());
+            String ipAddress = getClientIp(httpRequest);
+                
+            boolean requiresTwoFactor = twoFactorAuthService.requiresTwoFactor(
+                userId, 
+                clientType != null ? clientType : "browser",
+                deviceFingerprint,
+                hardwareId
+            );
+                
+            if (requiresTwoFactor) {
+                logger.info("[用户登录] 需要二次验证 - UserId: {}, ClientType: {}", userId, clientType);
+                    
+                // 2.1 使用前端传来的sessionId用于二次验证
+                String twoFactorSessionId = loginRequest.getSessionId();
+                logger.info("[用户登录] 前端传来的sessionId: {}", twoFactorSessionId);
+                    
+                // 2.2 存储会话信息到Redis（端口6379）
+                Map<String, Object> sessionData = new HashMap<>();
+                sessionData.put("userId", userId);
+                sessionData.put("email", response.getEmail() != null ? response.getEmail() : "");
+                sessionData.put("phone", response.getPhone() != null ? response.getPhone() : "");
+                sessionData.put("deviceFingerprint", deviceFingerprint);
+                sessionData.put("clientType", clientType != null ? clientType : "browser");
+                sessionData.put("clientIdentifier", clientIdentifier);
+                sessionData.put("platform", clientPlatform);
+                sessionData.put("hardwareId", hardwareId);
+                sessionData.put("createdAt", System.currentTimeMillis());
+                    
+                logger.info("[用户登录] 准备存储二次验证会话 - sessionId: {}, userId: {}", twoFactorSessionId, userId);
+                twoFactorAuthService.storeSessionData(twoFactorSessionId, sessionData, 
+                    clientType != null ? clientType : "browser");
+                    
+                // 2.3 返回需要二次验证的响应
+                LoginResponse twoFactorResponse = new LoginResponse();
+                twoFactorResponse.setCode(200);
+                twoFactorResponse.setSuccess(true);
+                twoFactorResponse.setMessage("需要二次验证");
+                twoFactorResponse.setRequiresTwoFactor(true);
+                twoFactorResponse.setSessionId(twoFactorSessionId);  // ✅ 使用前端传来的sessionId
+                twoFactorResponse.setUserId(response.getUserId());
+                twoFactorResponse.setEmail(response.getEmail());
+                twoFactorResponse.setPhone(response.getPhone());
+                    
+                // 获取密保问题
+                var user = userService.getUserById(userId);
+                if (user != null && user.getSecurityQuestionId() != null) {
+                    var questionText = securityQuestionService.getQuestionTextById(user.getSecurityQuestionId());
+                    if (questionText != null) {
+                        twoFactorResponse.setSecurityQuestion(questionText);
+                        twoFactorResponse.setSecurityQuestionId(user.getSecurityQuestionId());
+                    }
+                }
+                    
+                // 清除RSA Cookie
+                ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
+                        .httpOnly(true)
+                        .secure(true)  // HTTPS环境下必须设置为true
+                        .path("/")
+                        .maxAge(0)
+                        .sameSite("Lax")
+                        .build();
+                    
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                        .body(twoFactorResponse);
+                    
+            } else {
+                // 3. 不需要二次验证，直接返回登录成功
+                logger.info("[用户登录] 成功（信任设备） - UserIdOrEmail: {}, UserType: {}",
+                        loginRequest.getUserIdOrEmail(), response.getUserType());
+    
+                // ✅ 不需要二次验证时，删除RSA密钥对（一次性使用）
+                String redisKey = RSA_KEY_PREFIX + loginRequest.getSessionId();
+                redisTemplate.delete(redisKey);
+                logger.debug("[用户登录] 已删除RSA密钥对 - SessionId: {}", loginRequest.getSessionId());
+    
+                ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
+                        .httpOnly(true)
+                        .secure(true)  // HTTPS环境下必须设置为true
+                        .path("/")
+                        .maxAge(0)
+                        .sameSite("Lax")
+                        .build();
+    
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.SET_COOKIE, clearCookie.toString())
+                        .body(response);
+            }
+    
         } catch (Exception e) {
-            logger.error("[用户登录] 异常 - {}", e.getMessage());
-            e.printStackTrace();
+            logger.error("[用户登录] 异常 - {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().body(
                     new LoginResponse(500, false, "登录失败：" + e.getMessage())
             );
         }
+    }
+        
+    /**
+     * 获取客户端IP地址
+     * 优先级：X-Client-IP > X-Forwarded-For > X-Real-IP > RemoteAddr
+     */
+    private String getClientIp(jakarta.servlet.http.HttpServletRequest request) {
+        // 1. 优先从 X-Client-IP 获取（某些 CDN 或代理使用）
+        String ip = request.getHeader("X-Client-IP");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            // 2. 从 X-Forwarded-For 获取（经过代理/负载均衡）
+            ip = request.getHeader("X-Forwarded-For");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            // 3. 从 X-Real-IP 获取（Nginx 等反向代理常用）
+            ip = request.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            // 4. 直接获取远程地址
+            ip = request.getRemoteAddr();
+        }
+        // 如果是多个IP，取第一个
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 
 
@@ -322,7 +444,7 @@ public class AuthController {
         // 创建清除Cookie的响应（因为注册成功后密钥对已删除）
         ResponseCookie clearCookie = ResponseCookie.from("rsa_session_id", "")
             .httpOnly(true)
-            .secure(false)
+            .secure(true)  // HTTPS环境下必须设置为true
             .path("/")
             .maxAge(0)  // 立即过期，清除Cookie
             .sameSite("Lax")
@@ -533,14 +655,17 @@ public class AuthController {
      * @return 包含resetToken的响应对象
      */
     @PostMapping("/reset_password/verify/email")
-    public ResponseEntity<ResetPasswordVerifyResponse> verifyEmailForReset(@RequestBody ResetPasswordEmailVerifyRequest request) {
+    public ResponseEntity<ResetPasswordVerifyResponse> verifyEmailForReset(
+            @RequestBody ResetPasswordEmailVerifyRequest request,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint) {
         try {
-            logger.info("[重置密码-邮箱验证] 请求收到 - SessionId: {}, Email: {}", 
+            logger.info("[重置密码-邮箱验证] 请求收到 - SessionId: {}, Email: {}, DeviceFingerprint: {}", 
                 request != null ? request.getSessionId() : "null",
-                request != null ? request.getEmail() : "null");
+                request != null ? request.getEmail() : "null",
+                deviceFingerprint != null ? "已提供" : "未提供");
 
             // 调用服务层验证邮箱
-            ResetPasswordVerifyResponse response = userService.verifyEmailForReset(request);
+            ResetPasswordVerifyResponse response = userService.verifyEmailForReset(request, deviceFingerprint);
 
             // 返回响应
             if (response.isSuccess()) {
@@ -569,14 +694,17 @@ public class AuthController {
      * @return 包含resetToken的响应对象
      */
     @PostMapping("/reset_password/verify/phone")
-    public ResponseEntity<ResetPasswordVerifyResponse> verifyPhoneForReset(@RequestBody ResetPasswordPhoneVerifyRequest request) {
+    public ResponseEntity<ResetPasswordVerifyResponse> verifyPhoneForReset(
+            @RequestBody ResetPasswordPhoneVerifyRequest request,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint) {
         try {
-            logger.info("[重置密码-手机验证] 请求收到 - SessionId: {}, Phone: {}", 
+            logger.info("[重置密码-手机验证] 请求收到 - SessionId: {}, Phone: {}, DeviceFingerprint: {}", 
                 request != null ? request.getSessionId() : "null",
-                request != null ? request.getPhone() : "null");
+                request != null ? request.getPhone() : "null",
+                deviceFingerprint != null ? "已提供" : "未提供");
 
             // 调用服务层验证手机
-            ResetPasswordVerifyResponse response = userService.verifyPhoneForReset(request);
+            ResetPasswordVerifyResponse response = userService.verifyPhoneForReset(request, deviceFingerprint);
 
             // 返回响应
             if (response.isSuccess()) {
@@ -605,14 +733,17 @@ public class AuthController {
      * @return 包含resetToken的响应对象
      */
     @PostMapping("/reset_password/verify/security_answer")
-    public ResponseEntity<ResetPasswordVerifyResponse> verifySecurityAnswerForReset(@RequestBody ResetPasswordSecurityVerifyRequest request) {
+    public ResponseEntity<ResetPasswordVerifyResponse> verifySecurityAnswerForReset(
+            @RequestBody ResetPasswordSecurityVerifyRequest request,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint) {
         try {
-            logger.info("[重置密码-密保验证] 请求收到 - SessionId: {}, UserId: {}", 
+            logger.info("[重置密码-密保验证] 请求收到 - SessionId: {}, UserId: {}, DeviceFingerprint: {}", 
                 request != null ? request.getSessionId() : "null",
-                request != null ? request.getUserId() : "null");
+                request != null ? request.getUserId() : "null",
+                deviceFingerprint != null ? "已提供" : "未提供");
 
             // 调用服务层验证密保答案
-            ResetPasswordVerifyResponse response = userService.verifySecurityAnswerForReset(request);
+            ResetPasswordVerifyResponse response = userService.verifySecurityAnswerForReset(request, deviceFingerprint);
 
             // 返回响应
             if (response.isSuccess()) {
@@ -645,10 +776,12 @@ public class AuthController {
     @PostMapping("/reset_password/reset")
     public ResponseEntity<ResetPasswordResponse> resetPassword(
             @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint,
             @RequestBody ResetPasswordRequest request) {
         try {
-            logger.info("[重置密码] 请求收到 - SessionId: {}", 
-                request != null ? request.getSessionId() : "null");
+            logger.info("[重置密码] 请求收到 - SessionId: {}, DeviceFingerprint: {}", 
+                request != null ? request.getSessionId() : "null",
+                deviceFingerprint != null ? "已提供" : "未提供");
 
             // 提取Bearer Token
             String token = null;
@@ -660,7 +793,7 @@ public class AuthController {
             }
 
             // 调用服务层重置密码
-            ResetPasswordResponse response = userService.resetPassword(token, request);
+            ResetPasswordResponse response = userService.resetPassword(token, request, deviceFingerprint);
 
             // 返回响应
             if (response.isSuccess()) {
@@ -677,6 +810,445 @@ public class AuthController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body(
                 new ResetPasswordResponse(500, false, "服务器内部错误：" + e.getMessage())
+            );
+        }
+    }
+
+    /**
+     * 密保问题二次验证接口
+     * POST /auth/verify/security_answer
+     */
+    @PostMapping("/verify/security_answer")
+    public ResponseEntity<TwoFactorVerifyResponse> verifySecurityAnswer(
+            @RequestBody TwoFactorVerifyRequest verifyRequest,
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @RequestHeader(value = "X-Client-Identifier", required = false) String clientIdentifier,
+            @RequestHeader(value = "X-Client-Platform", required = false) String clientPlatform,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint,
+            @RequestHeader(value = "X-Hardware-Id", required = false) String hardwareId,
+            @RequestHeader(value = "X-Electron-Version", required = false) String electronVersion,
+            @RequestHeader(value = "X-Browser-Type", required = false) String browserType,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        try {
+            String sessionId = verifyRequest.getSessionId();
+            Long userId = verifyRequest.getUserId();
+            String encryptedAnswer = verifyRequest.getEncryptedAnswer();
+            
+            logger.info("[密保验证] 请求 - SessionId: {}, UserId: {}, ClientType: {}", 
+                       sessionId, userId, clientType);
+            
+            // 1. 验证参数
+            if (sessionId == null || sessionId.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话ID不能为空", null, null, null, null)
+                );
+            }
+            
+            if (userId == null) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "用户ID不能为空", null, null, null, null)
+                );
+            }
+            
+            if (encryptedAnswer == null || encryptedAnswer.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "答案不能为空", null, null, null, null)
+                );
+            }
+            
+            // 2. 从Redis获取会话信息（端口6378）
+            Map<String, Object> sessionData = twoFactorAuthService.getSessionData(sessionId, null);
+            if (sessionData == null) {
+                logger.warn("[密保验证] 会话不存在或已过期 - SessionId: {}", sessionId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话已过期，请重新登录", null, null, null, null)
+                );
+            }
+            
+            // 3. 从Redis获取RSA密钥对（端口6379）
+            String redisKey = RSA_KEY_PREFIX + sessionId;
+            com.mizuka.cloudfilesystem.dto.RSAKeyPairDTO keyPairDTO = 
+                (com.mizuka.cloudfilesystem.dto.RSAKeyPairDTO) redisTemplate.opsForValue().get(redisKey);
+            
+            if (keyPairDTO == null) {
+                logger.warn("[密保验证] RSA密钥不存在或已过期 - SessionId: {}", sessionId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话已过期，请重新获取公钥", null, null, null, null)
+                );
+            }
+            
+            // 4. 使用私钥解密答案
+            String decryptedAnswer;
+            try {
+                decryptedAnswer = com.mizuka.cloudfilesystem.util.RSAKeyManager.decryptWithPrivateKey(
+                    encryptedAnswer,
+                    keyPairDTO.getPrivateKey()
+                );
+                logger.debug("[密保验证] 答案解密成功 - SessionId: {}", sessionId);
+            } catch (Exception e) {
+                logger.error("[密保验证] 答案解密失败 - SessionId: {}, Error: {}", sessionId, e.getMessage());
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "答案解密失败：" + e.getMessage(), null, null, null, null)
+                );
+            }
+            
+            // 5. 验证答案
+            boolean verified = twoFactorAuthService.verifySecurityAnswer(userId, decryptedAnswer);
+            
+            // 6. 记录日志
+            String ipAddress = getClientIp(httpRequest);
+            String userAgent = httpRequest.getHeader("User-Agent");
+            
+            twoFactorAuthService.logVerification(
+                userId, null, deviceFingerprint, "security_answer", verified,
+                verified ? null : "答案错误",
+                clientType != null ? clientType : "browser",
+                clientPlatform, ipAddress, userAgent
+            );
+            
+            if (!verified) {
+                logger.warn("[密保验证] 验证失败 - UserId: {}", userId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "答案错误", null, null, null, null)
+                );
+            }
+            
+            // 7. 验证成功，生成JWT
+            String nickname = ""; // 不再在 JWT中包含nickname
+            String userType = getUserTypeFromUserId(userId);
+            java.time.LocalDateTime registeredAt = getRegisteredAtFromUserId(userId);
+            
+            // 确定JWT有效期
+            Long tokenExpiration;
+            if ("browser".equalsIgnoreCase(clientType)) {
+                tokenExpiration = 86400L;  // 24小时
+            } else {
+                tokenExpiration = 2592000L;  // 30天
+            }
+            
+            // 生成包含设备指纹的JWT令牌
+            String token = jwtUtil.generateTokenWithDeviceFingerprint(
+                userId, nickname, userType, registeredAt, tokenExpiration, deviceFingerprint
+            );
+            
+            // 8. 如果是客户端且验证成功，保存为信任设备
+            if (!"browser".equalsIgnoreCase(clientType)) {
+                twoFactorAuthService.saveTrustedDevice(
+                    userId, clientType, deviceFingerprint, hardwareId,
+                    clientIdentifier, clientPlatform, ipAddress
+                );
+            }
+
+            // 9. 如果是浏览器且验证成功，保存到Redis（端口6378）作为临时信任设备
+            if ("browser".equalsIgnoreCase(clientType)) {
+                browserType = httpRequest.getHeader("X-Browser-Type");
+                twoFactorAuthService.saveBrowserTrustedDevice(
+                    userId, deviceFingerprint, browserType, ipAddress
+                );
+                logger.info("[密保验证] 浏览器已保存为临时信任设备 - UserId: {}, Browser: {}", userId, browserType);
+            }
+            
+            // 10. 清除Redis中的会话数据
+            twoFactorAuthService.clearSessionData(sessionId, clientType);
+            
+            // 11. 删除RSA密钥对（一次性使用）
+            redisTemplate.delete(redisKey);
+            
+            // 12. 返回成功响应
+            logger.info("[密保验证] 验证成功 - UserId: {}, ClientType: {}", userId, clientType);
+            
+            TwoFactorVerifyResponse response = new TwoFactorVerifyResponse();
+            response.setCode(200);
+            response.setSuccess(true);
+            response.setMessage("验证成功");
+            response.setToken(token);
+            response.setUserId(userId);
+            response.setUserType(userType);
+            response.setHomeDirectory("user".equals(userType) ? "/users/" + userId : "/admin/");
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("[密保验证] 异常 - {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(
+                new TwoFactorVerifyResponse(500, false, "服务器内部错误", null, null, null, null)
+            );
+        }
+    }
+    
+    /**
+     * 根据用户ID获取用户类型
+     */
+    private String getUserTypeFromUserId(Long userId) {
+        // User表中的用户都是普通用户，返回"user"
+        // 如果是管理员，应该在administrators表中查询
+        return "user";
+    }
+    
+    /**
+     * 根据用户ID获取注册时间
+     */
+    private java.time.LocalDateTime getRegisteredAtFromUserId(Long userId) {
+        var user = userService.getUserById(userId);
+        return user != null ? user.getRegisteredAt() : java.time.LocalDateTime.now();
+    }
+    
+    /**
+     * 邮箱验证码二次验证接口
+     * POST /auth/verify/email
+     */
+    @PostMapping("/verify/email")
+    public ResponseEntity<TwoFactorVerifyResponse> verifyEmail(
+            @RequestBody TwoFactorVerifyRequest verifyRequest,
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @RequestHeader(value = "X-Client-Identifier", required = false) String clientIdentifier,
+            @RequestHeader(value = "X-Client-Platform", required = false) String clientPlatform,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint,
+            @RequestHeader(value = "X-Hardware-Id", required = false) String hardwareId,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        try {
+            String sessionId = verifyRequest.getSessionId();
+            Long userId = verifyRequest.getUserId();
+            String verificationCode = verifyRequest.getVerificationCode();
+            
+            logger.info("[邮箱验证] 请求 - SessionId: {}, UserId: {}, ClientType: {}", 
+                       sessionId, userId, clientType);
+            
+            // 1. 验证参数
+            if (sessionId == null || sessionId.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话ID不能为空", null, null, null, null)
+                );
+            }
+            
+            if (userId == null) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "用户ID不能为空", null, null, null, null)
+                );
+            }
+            
+            if (verificationCode == null || verificationCode.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "验证码不能为空", null, null, null, null)
+                );
+            }
+            
+            // 2. 从Redis获取会话信息（端口6379）
+            Map<String, Object> sessionData = twoFactorAuthService.getSessionData(sessionId, null);
+            if (sessionData == null) {
+                logger.warn("[邮箱验证] 会话不存在或已过期 - SessionId: {}", sessionId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话已过期，请重新登录", null, null, null, null)
+                );
+            }
+            
+            // 3. 验证邮箱验证码
+            boolean verified = twoFactorAuthService.verifyEmailCode(sessionId, verificationCode);
+            
+            // 4. 记录日志
+            String ipAddress = getClientIp(httpRequest);
+            String userAgent = httpRequest.getHeader("User-Agent");
+            
+            twoFactorAuthService.logVerification(
+                userId, null, deviceFingerprint, "email", verified,
+                verified ? null : "验证码错误或已过期",
+                clientType != null ? clientType : "browser",
+                clientPlatform, ipAddress, userAgent
+            );
+            
+            if (!verified) {
+                logger.warn("[邮箱验证] 验证失败 - UserId: {}", userId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "验证码错误或已过期", null, null, null, null)
+                );
+            }
+            
+            // 5. 验证成功，生成JWT
+            String nickname = ""; // 不再在 JWT中包含nickname
+            String userType = getUserTypeFromUserId(userId);
+            java.time.LocalDateTime registeredAt = getRegisteredAtFromUserId(userId);
+            
+            // 确定JWT有效期
+            Long tokenExpiration;
+            if ("browser".equalsIgnoreCase(clientType)) {
+                tokenExpiration = 86400L;  // 24小时
+            } else {
+                tokenExpiration = 2592000L;  // 30天
+            }
+            
+            // 生成包含设备指纹的JWT令牌
+            String token = jwtUtil.generateTokenWithDeviceFingerprint(
+                userId, nickname, userType, registeredAt, tokenExpiration, deviceFingerprint
+            );
+            
+            // 6. 如果是浏览器且验证成功，保存到Redis（端口6378）作为临时信任设备
+            if ("browser".equalsIgnoreCase(clientType)) {
+                String browserType = httpRequest.getHeader("X-Browser-Type");
+                twoFactorAuthService.saveBrowserTrustedDevice(
+                    userId, deviceFingerprint, browserType, ipAddress
+                );
+                logger.info("[邮箱验证] 浏览器已保存为临时信任设备 - UserId: {}, Browser: {}", userId, browserType);
+            }
+            
+            // 7. 如果是客户端且验证成功，保存为信任设备到MySQL
+            if (!"browser".equalsIgnoreCase(clientType)) {
+                twoFactorAuthService.saveTrustedDevice(
+                    userId, clientType, deviceFingerprint, hardwareId,
+                    clientIdentifier, clientPlatform, ipAddress
+                );
+            }
+            
+            // 8. 清除Redis中的会话数据
+            twoFactorAuthService.clearSessionData(sessionId, clientType);
+            
+            // 9. 返回成功响应
+            logger.info("[邮箱验证] 验证成功 - UserId: {}, ClientType: {}", userId, clientType);
+            
+            TwoFactorVerifyResponse response = new TwoFactorVerifyResponse();
+            response.setCode(200);
+            response.setSuccess(true);
+            response.setMessage("验证成功");
+            response.setToken(token);
+            response.setUserId(userId);
+            response.setUserType(userType);
+            response.setHomeDirectory("user".equals(userType) ? "/users/" + userId : "/admin/");
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("[邮箱验证] 异常 - {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(
+                new TwoFactorVerifyResponse(500, false, "服务器内部错误", null, null, null, null)
+            );
+        }
+    }
+    
+    /**
+     * 手机验证码二次验证接口
+     * POST /auth/verify/phone
+     */
+    @PostMapping("/verify/phone")
+    public ResponseEntity<TwoFactorVerifyResponse> verifyPhone(
+            @RequestBody TwoFactorVerifyRequest verifyRequest,
+            @RequestHeader(value = "X-Client-Type", required = false) String clientType,
+            @RequestHeader(value = "X-Client-Identifier", required = false) String clientIdentifier,
+            @RequestHeader(value = "X-Client-Platform", required = false) String clientPlatform,
+            @RequestHeader(value = "X-Device-Fingerprint", required = false) String deviceFingerprint,
+            @RequestHeader(value = "X-Hardware-Id", required = false) String hardwareId,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
+        try {
+            String sessionId = verifyRequest.getSessionId();
+            Long userId = verifyRequest.getUserId();
+            String verificationCode = verifyRequest.getVerificationCode();
+            
+            logger.info("[手机验证] 请求 - SessionId: {}, UserId: {}, ClientType: {}", 
+                       sessionId, userId, clientType);
+            
+            // 1. 验证参数
+            if (sessionId == null || sessionId.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话ID不能为空", null, null, null, null)
+                );
+            }
+            
+            if (userId == null) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "用户ID不能为空", null, null, null, null)
+                );
+            }
+            
+            if (verificationCode == null || verificationCode.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "验证码不能为空", null, null, null, null)
+                );
+            }
+            
+            // 2. 从Redis获取会话信息（端口6379）
+            Map<String, Object> sessionData = twoFactorAuthService.getSessionData(sessionId, null);
+            if (sessionData == null) {
+                logger.warn("[手机验证] 会话不存在或已过期 - SessionId: {}", sessionId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "会话已过期，请重新登录", null, null, null, null)
+                );
+            }
+            
+            // 3. 验证手机验证码
+            boolean verified = twoFactorAuthService.verifyPhoneCode(sessionId, verificationCode);
+            
+            // 4. 记录日志
+            String ipAddress = getClientIp(httpRequest);
+            String userAgent = httpRequest.getHeader("User-Agent");
+            
+            twoFactorAuthService.logVerification(
+                userId, null, deviceFingerprint, "phone", verified,
+                verified ? null : "验证码错误或已过期",
+                clientType != null ? clientType : "browser",
+                clientPlatform, ipAddress, userAgent
+            );
+            
+            if (!verified) {
+                logger.warn("[手机验证] 验证失败 - UserId: {}", userId);
+                return ResponseEntity.badRequest().body(
+                    new TwoFactorVerifyResponse(400, false, "验证码错误或已过期", null, null, null, null)
+                );
+            }
+            
+            // 5. 验证成功，生成JWT
+            String nickname = ""; // 不再在 JWT中包含nickname
+            String userType = getUserTypeFromUserId(userId);
+            java.time.LocalDateTime registeredAt = getRegisteredAtFromUserId(userId);
+            
+            // 确定JWT有效期
+            Long tokenExpiration;
+            if ("browser".equalsIgnoreCase(clientType)) {
+                tokenExpiration = 86400L;  // 24小时
+            } else {
+                tokenExpiration = 2592000L;  // 30天
+            }
+            
+            // 生成包含设备指纹的JWT令牌
+            String token = jwtUtil.generateTokenWithDeviceFingerprint(
+                userId, nickname, userType, registeredAt, tokenExpiration, deviceFingerprint
+            );
+            
+            // 6. 如果是浏览器且验证成功，保存到Redis（端口6378）作为临时信任设备
+            if ("browser".equalsIgnoreCase(clientType)) {
+                String browserType = httpRequest.getHeader("X-Browser-Type");
+                twoFactorAuthService.saveBrowserTrustedDevice(
+                    userId, deviceFingerprint, browserType, ipAddress
+                );
+                logger.info("[手机验证] 浏览器已保存为临时信任设备 - UserId: {}, Browser: {}", userId, browserType);
+            }
+            
+            // 7. 如果是客户端且验证成功，保存为信任设备到MySQL
+            if (!"browser".equalsIgnoreCase(clientType)) {
+                twoFactorAuthService.saveTrustedDevice(
+                    userId, clientType, deviceFingerprint, hardwareId,
+                    clientIdentifier, clientPlatform, ipAddress
+                );
+            }
+            
+            // 8. 清除Redis中的会话数据
+            twoFactorAuthService.clearSessionData(sessionId, clientType);
+            
+            // 9. 返回成功响应
+            logger.info("[手机验证] 验证成功 - UserId: {}, ClientType: {}", userId, clientType);
+            
+            TwoFactorVerifyResponse response = new TwoFactorVerifyResponse();
+            response.setCode(200);
+            response.setSuccess(true);
+            response.setMessage("验证成功");
+            response.setToken(token);
+            response.setUserId(userId);
+            response.setUserType(userType);
+            response.setHomeDirectory("user".equals(userType) ? "/users/" + userId : "/admin/");
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("[手机验证] 异常 - {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(
+                new TwoFactorVerifyResponse(500, false, "服务器内部错误", null, null, null, null)
             );
         }
     }

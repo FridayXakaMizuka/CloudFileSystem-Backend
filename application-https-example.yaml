@@ -1,0 +1,92 @@
+# HTTPS 配置示例
+# 将此配置添加到 application.yaml 中
+
+# ==================== 方案A：仅HTTPS（推荐生产环境）====================
+server:
+  address: 0.0.0.0
+  port: 8835  # HTTPS端口
+  ssl:
+    enabled: true
+    key-store: classpath:ssl/keystore.p12  # 证书文件路径
+    key-store-password: changeit  # 证书密码（请修改为强密码）
+    key-store-type: PKCS12
+    key-alias: tomcat
+    # 可选：启用TLS协议版本
+    protocol: TLSv1.2,TLSv1.3
+    # 可选：启用客户端认证（双向SSL）
+    # client-auth: want  # none/want/require
+
+# ==================== 方案B：同时支持HTTP和HTTPS ====================
+# 如果需要同时支持HTTP和HTTPS，需要额外配置
+# 在Java代码中添加Tomcat连接器（见 HttpsConfig.java）
+
+# HTTP配置（通过Java代码配置）
+# server.port=8835 (HTTPS)
+# 额外添加HTTP连接器到8080端口
+
+# ==================== 方案C：使用外部Web服务器（推荐）====================
+# 如果使用Nginx/Apache作为反向代理，后端可以保持HTTP
+# 在Nginx中配置SSL终止
+
+# 后端保持HTTP配置
+# server:
+#   address: 0.0.0.0
+#   port: 8835
+#   # 不配置ssl部分
+
+# Nginx配置示例：
+# server {
+#     listen 443 ssl;
+#     server_name api.yourdomain.com;
+#     
+#     ssl_certificate /path/to/cert.pem;
+#     ssl_certificate_key /path/to/key.pem;
+#     
+#     location / {
+#         proxy_pass http://localhost:8835;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto $scheme;
+#     }
+# }
+
+# ==================== SSL优化配置（可选）====================
+# 以下配置可以提升SSL性能和安全性
+
+# Tomcat SSL优化（在application.yaml中无法直接配置，需要通过Java配置）
+# 建议的配置：
+# - 启用会话缓存
+# - 配置加密套件
+# - 启用HSTS（HTTP Strict Transport Security）
+
+# HSTS配置示例（通过Java配置类）
+# @Bean
+# public TomcatServletWebServerFactory tomcatFactory() {
+#     TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory();
+#     factory.addConnectorCustomizers(connector -> {
+#         connector.addUpgradeProtocol(new Http2Protocol());
+#     });
+#     return factory;
+# }
+
+# ==================== 证书信息查看 ====================
+# 查看证书详情：
+# keytool -list -v -keystore src/main/resources/ssl/keystore.p12 -storepass changeit
+
+# ==================== 注意事项 ====================
+# 1. 生产环境请使用正式的SSL证书（Let's Encrypt或商业证书）
+# 2. 不要将证书密码硬编码在配置文件中，使用环境变量
+# 3. 定期更新证书（Let's Encrypt证书有效期90天）
+# 4. 备份证书文件和密码
+# 5. 使用强密码保护私钥
+
+# ==================== 环境变量方式（推荐）====================
+# 使用环境变量代替硬编码密码
+# server:
+#   ssl:
+#     key-store-password: ${SSL_KEYSTORE_PASSWORD}
+#
+# 启动时设置环境变量：
+# export SSL_KEYSTORE_PASSWORD=your_secure_password
+# java -jar app.jar

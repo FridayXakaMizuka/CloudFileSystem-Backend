@@ -1,5 +1,6 @@
 package com.mizuka.cloudfilesystem.config;
 
+import com.mizuka.cloudfilesystem.filter.SecurityHeaderFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +25,9 @@ public class SecurityConfig {
     
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    
+    @Autowired
+    private SecurityHeaderFilter securityHeaderFilter;
 
     /**
      * 配置 CORS
@@ -31,7 +35,8 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:2310"));
+        // 开发环境允许所有来源，生产环境应限制具体域名
+        configuration.setAllowedOriginPatterns(Arrays.asList("*"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"));
         configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
@@ -74,8 +79,10 @@ public class SecurityConfig {
                 .anyRequest().authenticated()
             )
             
-            // 添加JWT认证过滤器（在UsernamePasswordAuthenticationFilter之前执行）
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            // 添加安全请求头过滤器（最先执行，提取设备指纹等信息）
+            .addFilterBefore(securityHeaderFilter, UsernamePasswordAuthenticationFilter.class)
+            // 添加JWT认证过滤器（在SecurityHeaderFilter之后执行）
+            .addFilterAfter(jwtAuthenticationFilter, SecurityHeaderFilter.class);
         
         return http.build();
     }

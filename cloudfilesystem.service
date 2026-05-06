@@ -1,0 +1,135 @@
+# systemd服务配置文件 - CloudFileSystem
+# 文件位置: /etc/systemd/system/cloudfilesystem.service
+
+[Unit]
+Description=Cloud FileSystem Application
+Documentation=https://github.com/yourusername/CloudFileSystem
+After=network.target mysql.service redis.service
+Wants=mysql.service redis.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+
+# 工作目录
+WorkingDirectory=/opt/cloudfilesystem
+
+# 启动命令
+ExecStart=/usr/bin/java \
+    -Xms512m \
+    -Xmx2g \
+    -XX:+UseG1GC \
+    -XX:MaxGCPauseMillis=200 \
+    -XX:+HeapDumpOnOutOfMemoryError \
+    -XX:HeapDumpPath=/var/log/cloudfilesystem/heapdump.hprof \
+    -jar /opt/cloudfilesystem/CloudFileSystem.jar \
+    --spring.profiles.active=production
+
+# 重启策略
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=60
+StartLimitBurst=3
+
+# 环境变量（根据实际需求修改）
+# 方式1：直接在文件中设置（不推荐，密码会明文存储）
+# Environment="ALIYUN_ACCESS_KEY_ID=your_key_id"
+# Environment="ALIYUN_ACCESS_KEY_SECRET=your_key_secret"
+
+# 方式2：使用EnvironmentFile（推荐）
+EnvironmentFile=/etc/cloudfilesystem/env
+
+# 资源限制
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# 安全选项
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/cloudfilesystem/files /var/log/cloudfilesystem
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cloudfilesystem
+
+# 超时设置
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+
+# ==================== 使用说明 ====================
+#
+# 1. 创建应用目录：
+#    sudo mkdir -p /opt/cloudfilesystem
+#    sudo mkdir -p /var/log/cloudfilesystem
+#    sudo chown -R www-data:www-data /opt/cloudfilesystem
+#    sudo chown -R www-data:www-data /var/log/cloudfilesystem
+#
+# 2. 上传应用jar包：
+#    sudo cp CloudFileSystem.jar /opt/cloudfilesystem/
+#    sudo chown www-data:www-data /opt/cloudfilesystem/CloudFileSystem.jar
+#
+# 3. 创建环境变量文件 /etc/cloudfilesystem/env：
+#    ALIYUN_ACCESS_KEY_ID=your_key_id
+#    ALIYUN_ACCESS_KEY_SECRET=your_key_secret
+#    # 其他环境变量...
+#
+# 4. 设置文件权限：
+#    sudo chmod 600 /etc/cloudfilesystem/env
+#    sudo chown root:root /etc/cloudfilesystem/env
+#
+# 5. 启用并启动服务：
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable cloudfilesystem
+#    sudo systemctl start cloudfilesystem
+#
+# 6. 查看服务状态：
+#    sudo systemctl status cloudfilesystem
+#
+# 7. 查看日志：
+#    sudo journalctl -u cloudfilesystem -f
+#
+# 8. 常用命令：
+#    sudo systemctl restart cloudfilesystem  # 重启
+#    sudo systemctl stop cloudfilesystem     # 停止
+#    sudo systemctl reload cloudfilesystem   # 重新加载配置
+#    sudo journalctl -u cloudfilesystem -n 100  # 查看最近100行日志
+#
+# ==================== JVM参数说明 ====================
+#
+# -Xms512m          : 初始堆内存512MB
+# -Xmx2g            : 最大堆内存2GB（根据服务器配置调整）
+# -XX:+UseG1GC      : 使用G1垃圾收集器
+# -XX:MaxGCPauseMillis=200 : 最大GC暂停时间200ms
+# -XX:+HeapDumpOnOutOfMemoryError : OOM时生成堆转储
+# -XX:HeapDumpPath  : 堆转储文件路径
+#
+# ==================== 性能调优建议 ====================
+#
+# 小内存服务器（2GB）：
+#   -Xms256m -Xmx1g
+#
+# 中等服务器（4-8GB）：
+#   -Xms1g -Xmx3g
+#
+# 大内存服务器（16GB+）：
+#   -Xms4g -Xmx8g
+#
+# ==================== 监控建议 ====================
+#
+# 1. 监控JVM内存使用：
+#    添加JMX参数启用远程监控
+#
+# 2. 监控GC情况：
+#    添加 -verbose:gc -XX:+PrintGCDetails -Xloggc:/var/log/cloudfilesystem/gc.log
+#
+# 3. 监控系统资源：
+#    htop, iotop, nethogs等工具
+#
+# 4. 设置告警：
+#    当内存使用超过80%、CPU持续高负载时告警

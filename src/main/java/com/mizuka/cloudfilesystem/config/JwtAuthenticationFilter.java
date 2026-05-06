@@ -18,7 +18,7 @@ import java.util.Collections;
 
 /**
  * JWT 认证过滤器
- * 拦截所有请求，验证 JWT 令牌的有效性
+ * 拦截所有请求，验证 JWT 令牌的有效性和设备指纹一致性
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -46,6 +46,41 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 if (jwtUtil.validateToken(token)) {
                     // 从令牌中获取用户ID
                     Long userId = jwtUtil.getUserIdFromToken(token);
+                    
+                    // 从JWT中获取存储的设备指纹
+                    String jwtDeviceFingerprint = jwtUtil.getDeviceFingerprintFromToken(token);
+                    
+                    // 从请求头中获取当前设备指纹（由 SecurityHeaderFilter 设置）
+                    String requestDeviceFingerprint = (String) request.getAttribute("deviceFingerprint");
+                    
+                    // 调试日志：记录从 request attribute 读取的值
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[JWT认证] 从 request attribute 读取 - deviceFingerprint: {}", 
+                            requestDeviceFingerprint != null ? 
+                                requestDeviceFingerprint.substring(0, Math.min(16, requestDeviceFingerprint.length())) + "..." : "null"
+                        );
+                    }
+                    
+                    // 如果JWT中包含设备指纹，则验证一致性
+                    if (jwtDeviceFingerprint != null && !jwtDeviceFingerprint.isEmpty()) {
+                        if (requestDeviceFingerprint == null || !jwtDeviceFingerprint.equals(requestDeviceFingerprint)) {
+                            logger.warn("[JWT认证] 设备指纹不匹配 - UserId: {}, JWT指纹: {}, 请求指纹: {}", 
+                                userId, 
+                                jwtDeviceFingerprint.substring(0, Math.min(16, jwtDeviceFingerprint.length())) + "...",
+                                requestDeviceFingerprint != null ? 
+                                    requestDeviceFingerprint.substring(0, Math.min(16, requestDeviceFingerprint.length())) + "..." : "null"
+                            );
+                            
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                            response.setContentType("application/json;charset=UTF-8");
+                            response.getWriter().write("{\"code\":401,\"success\":false,\"message\":\"设备验证失败，请重新登录\"}");
+                            return;
+                        }
+                        
+                        logger.debug("[JWT认证] 设备指纹验证通过 - UserId: {}", userId);
+                    } else {
+                        logger.debug("[JWT认证] JWT中无设备指纹，跳过验证 - UserId: {}", userId);
+                    }
 
                     // 创建认证对象
                     UsernamePasswordAuthenticationToken authentication =
@@ -58,7 +93,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     // 将认证信息设置到 SecurityContext
                     SecurityContextHolder.getContext().setAuthentication(authentication);
 
-                    // 将用户ID设置到请求属性中，方便后续使用
+                    // 将用户ID和设备信息设置到请求属性中，方便后续使用
                     request.setAttribute("userId", userId);
 
                     logger.debug("[JWT认证] 成功 - UserId: {}, URI: {}", userId, request.getRequestURI());
@@ -84,11 +119,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     /**
      * 排除不需要 JWT 认证的路径
-     * 所有 /api/auth/** 路径都不需要 JWT 认证
+     * 所有 /auth/** 路径都不需要 JWT 认证（包括登录、注册、二次验证等）
      */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
-        return path.startsWith("/api/auth/");
+        return path.startsWith("/auth/rsa-key")
+                || path.startsWith("/auth/login")
+                || path.startsWith("/auth/register")
+                || path.startsWith("/auth/security-questions")
+                || path.startsWith("/auth/vfcode/email")
+                || path.startsWith("/auth/vfcode/phone")
+                || path.startsWith("/auth/reset_password/find_user")
+                || path.startsWith("/auth/reset_password/verify/email")
+                || path.startsWith("/auth/reset_password/verify/phone")
+                || path.startsWith("/auth/reset_password/verify/security_answer")
+                || path.startsWith("/auth/verify/email")
+                || path.startsWith("/auth/verify/phone")
+                || path.startsWith("/auth/verify/security_answer");
     }
 }

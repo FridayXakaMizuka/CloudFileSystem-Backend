@@ -1,4 +1,3 @@
-HELP.md
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
@@ -31,3 +30,15 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Documentation ###
+# 文档文件夹（可选，如果需要提交文档则注释掉下面这行）
+# docs/
+
+# 临时文件和日志
+*.log
+*.tmp
+*.swp
+*~
+/batsh/
+/docs/

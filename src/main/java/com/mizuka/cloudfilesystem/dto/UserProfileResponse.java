@@ -22,23 +22,25 @@ public class UserProfileResponse {
      */
     public static class UserData {
         private String avatar;           // 头像URL
-        private String nickname;         // 昵称
         private String email;            // 邮箱（脱敏）
+        private String nickname;         // 昵称
         private String phone;            // 手机号（脱敏）
-        private Long storageUsed;        // 已使用空间（字节）
+        private String securityQuestion; // 安全问题内容
         private Long storageQuota;       // 空间配额（字节）
+        private Long storageUsed;        // 已使用空间（字节）
 
         public UserData() {
         }
 
-        public UserData(String avatar, String nickname, String email, String phone,
-                       Long storageUsed, Long storageQuota) {
+        public UserData(String avatar, String email, String nickname, String phone,
+                       String securityQuestion, Long storageQuota, Long storageUsed) {
             this.avatar = avatar;
-            this.nickname = nickname;
             this.email = email;
+            this.nickname = nickname;
             this.phone = phone;
-            this.storageUsed = storageUsed;
+            this.securityQuestion = securityQuestion;
             this.storageQuota = storageQuota;
+            this.storageUsed = storageUsed;
         }
 
         public String getAvatar() {
@@ -71,6 +73,14 @@ public class UserProfileResponse {
 
         public void setPhone(String phone) {
             this.phone = phone;
+        }
+
+        public String getSecurityQuestion() {
+            return securityQuestion;
+        }
+
+        public void setSecurityQuestion(String securityQuestion) {
+            this.securityQuestion = securityQuestion;
         }
 
         public Long getStorageUsed() {

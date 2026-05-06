@@ -41,6 +41,24 @@ public class LoginResponse {
     // 过期时间（登录成功时返回）
     private LocalDateTime expiresAt;
 
+    // 是否需要二次验证
+    private Boolean requiresTwoFactor;
+
+    // 二次验证会话ID（需要二次验证时返回）
+    private String sessionId;
+
+    // 密保问题文本（需要二次验证时返回）
+    private String securityQuestion;
+
+    // 密保问题ID（需要二次验证时返回）
+    private Integer securityQuestionId;
+
+    // 邮箱地址（需要二次验证时返回）
+    private String email;
+
+    // 手机号（需要二次验证时返回）
+    private String phone;
+
     public LoginResponse() {
     }
 
@@ -143,5 +161,53 @@ public class LoginResponse {
 
     public void setExpiresAt(LocalDateTime expiresAt) {
         this.expiresAt = expiresAt;
+    }
+
+    public Boolean getRequiresTwoFactor() {
+        return requiresTwoFactor;
+    }
+
+    public void setRequiresTwoFactor(Boolean requiresTwoFactor) {
+        this.requiresTwoFactor = requiresTwoFactor;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
+    }
+
+    public String getSecurityQuestion() {
+        return securityQuestion;
+    }
+
+    public void setSecurityQuestion(String securityQuestion) {
+        this.securityQuestion = securityQuestion;
+    }
+
+    public Integer getSecurityQuestionId() {
+        return securityQuestionId;
+    }
+
+    public void setSecurityQuestionId(Integer securityQuestionId) {
+        this.securityQuestionId = securityQuestionId;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPhone() {
+        return phone;
+    }
+
+    public void setPhone(String phone) {
+        this.phone = phone;
     }
 }

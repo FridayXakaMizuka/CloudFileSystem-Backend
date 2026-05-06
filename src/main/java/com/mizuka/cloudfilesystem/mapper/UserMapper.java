@@ -94,4 +94,16 @@ public interface UserMapper {
      */
     @Update("UPDATE users SET phone = #{phone} WHERE id = #{id}")
     int updatePhone(@Param("id") Long id, @Param("phone") String phone);
+
+    /**
+     * 更新用户密保问题和安全答案
+     * @param id 用户ID
+     * @param securityQuestionId 新的安全问题ID
+     * @param securityAnswer BCrypt加密后的安全答案
+     * @return 影响的行数
+     */
+    @Update("UPDATE users SET security_question_id = #{securityQuestionId}, security_answer = #{securityAnswer} WHERE id = #{id}")
+    int updateSecurityQuestion(@Param("id") Long id, 
+                               @Param("securityQuestionId") Integer securityQuestionId, 
+                               @Param("securityAnswer") String securityAnswer);
 }

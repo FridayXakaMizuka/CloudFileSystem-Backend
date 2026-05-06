@@ -1,17 +1,19 @@
 package com.mizuka.cloudfilesystem.controller;
 
 import com.mizuka.cloudfilesystem.dto.AvatarResponse;
+import com.mizuka.cloudfilesystem.dto.EmailChangeRequest;
+import com.mizuka.cloudfilesystem.dto.EmailChangeResponse;
 import com.mizuka.cloudfilesystem.dto.NicknameChangeRequest;
 import com.mizuka.cloudfilesystem.dto.NicknameChangeResponse;
 import com.mizuka.cloudfilesystem.dto.PasswordChangeRequest;
 import com.mizuka.cloudfilesystem.dto.PasswordChangeResponse;
 import com.mizuka.cloudfilesystem.dto.PasswordVerificationRequest;
 import com.mizuka.cloudfilesystem.dto.PasswordVerificationResponse;
-import com.mizuka.cloudfilesystem.dto.UserProfileResponse;
-import com.mizuka.cloudfilesystem.dto.EmailChangeRequest;
-import com.mizuka.cloudfilesystem.dto.EmailChangeResponse;
 import com.mizuka.cloudfilesystem.dto.PhoneChangeRequest;
 import com.mizuka.cloudfilesystem.dto.PhoneChangeResponse;
+import com.mizuka.cloudfilesystem.dto.SecurityQuestionChangeRequest;
+import com.mizuka.cloudfilesystem.dto.SecurityQuestionChangeResponse;
+import com.mizuka.cloudfilesystem.dto.UserProfileResponse;
 import com.mizuka.cloudfilesystem.service.AvatarService;
 import com.mizuka.cloudfilesystem.service.UserService;
 import org.slf4j.Logger;
@@ -418,6 +420,53 @@ public class ProfileController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body(
                 new PhoneChangeResponse(500, false, "服务器内部错误：" + e.getMessage())
+            );
+        }
+    }
+
+    /**
+     * 修改用户密保问题
+     * POST /profile/security_question/set
+     * 
+     * @param authHeader Authorization头，格式：Bearer {token}
+     * @param request 修改密保问题请求对象
+     * @return 修改密保问题响应对象
+     */
+    @PostMapping("/security_question/set")
+    public ResponseEntity<SecurityQuestionChangeResponse> changeSecurityQuestion(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestBody SecurityQuestionChangeRequest request) {
+        try {
+            // 验证Authorization头
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                logger.warn("[修改密保问题] 失败 - 未提供有效的认证令牌");
+                return ResponseEntity.status(401).body(
+                    new SecurityQuestionChangeResponse(false, "未提供有效的认证令牌")
+                );
+            }
+
+            // 提取JWT令牌
+            String token = authHeader.substring(7);
+
+            logger.info("[修改密保问题] 请求收到");
+
+            // 调用服务层修改密保问题
+            SecurityQuestionChangeResponse response = userService.changeSecurityQuestion(token, request);
+
+            // 返回响应
+            if (response.isSuccess()) {
+                logger.info("[修改密保问题] 成功");
+                return ResponseEntity.ok(response);
+            } else {
+                logger.warn("[修改密保问题] 失败 - {}", response.getMessage());
+                return ResponseEntity.status(400).body(response);
+            }
+
+        } catch (Exception e) {
+            logger.error("[修改密保问题] 异常 - {}", e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(
+                new SecurityQuestionChangeResponse(false, "服务器内部错误：" + e.getMessage())
             );
         }
     }

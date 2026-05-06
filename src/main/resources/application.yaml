@@ -29,6 +29,13 @@ spring:
             required: true
           ssl:
             trust: smtp.qq.com  # 信任的SMTP服务器
+  # 文件上传配置
+  servlet:
+    multipart:
+      max-file-size: -1      # 单个文件最大大小
+      max-request-size: -1   # 整个请求最大大小
+      file-size-threshold: 1GB  # 超过 1GB 就写入磁盘，不占内存
+      enabled: true             # 启用文件上传
 # 个人资料缓存Redis配置（独立实例）
 profile:
   redis:
@@ -36,11 +43,22 @@ profile:
     port: 6380
     database: 0
     timeout: 3000ms
+# 信任的web浏览器登录
+trustedBrowsers:
+  redis:
+    host: localhost
+    port: 6378
+    database: 0
+    timeout: 3000ms
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
 server:
+  address: 127.0.0.1  # 生产环境只监听本地，通过Nginx代理访问
   port: 8835
+  forward-headers-strategy: native
+  # Nginx反向代理方案：后端保持HTTP，SSL在Nginx层处理
+  # 如需直接HTTPS访问，请参考 application-https-example.yaml
 
 # 日志配置
 logging:
@@ -79,3 +97,5 @@ aliyun:
     template-code: 100005
     access-key-id: ${ALIYUN_ACCESS_KEY_ID}
     access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET}
+
+

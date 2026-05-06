@@ -60,6 +60,14 @@ public class RSAKeyManager {
      */
     public static String decryptWithPrivateKey(String encryptedData, String privateKeyBase64) throws Exception {
         try {
+            // 验证输入参数
+            if (encryptedData == null || encryptedData.trim().isEmpty()) {
+                throw new IllegalArgumentException("加密数据不能为空");
+            }
+            if (privateKeyBase64 == null || privateKeyBase64.trim().isEmpty()) {
+                throw new IllegalArgumentException("私钥不能为空");
+            }
+            
             // 解码Base64格式的私钥
             byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyBase64);
 
@@ -86,10 +94,23 @@ public class RSAKeyManager {
             return new String(decryptedBytes, "UTF-8");
         } catch (javax.crypto.BadPaddingException e) {
             // 填充错误通常意味着密钥不匹配或数据损坏
-            throw new IllegalArgumentException(
-                "RSA解密失败：密钥不匹配或数据已损坏。请确认前端使用的公钥与后端私钥匹配。",
+            // 提供更详细的错误信息用于调试
+            String errorMsg = String.format(
+                "RSA解密失败：密钥不匹配或数据已损坏。\n" +
+                "可能原因：\n" +
+                "1. 前端使用的公钥与后端私钥不匹配（sessionId对应的密钥对已被删除或更新）\n" +
+                "2. 前端加密的数据格式错误\n" +
+                "3. 加密数据在传输过程中被损坏\n" +
+                "请确认：\n" +
+                "- 前端在获取公钥后立即使用，不要缓存\n" +
+                "- 每次登录前都调用 /auth/rsa-key 获取新公钥\n" +
+                "- sessionId在整个流程中保持一致",
                 e
             );
+            throw new IllegalArgumentException(errorMsg, e);
+        } catch (IllegalArgumentException e) {
+            // 参数验证失败
+            throw e;
         } catch (Exception e) {
             // 其他错误
             throw new Exception("RSA解密失败：" + e.getMessage(), e);

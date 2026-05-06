@@ -11,6 +11,8 @@ import com.mizuka.cloudfilesystem.dto.PasswordVerificationResponse;
 import com.mizuka.cloudfilesystem.dto.RegisterRequest;
 import com.mizuka.cloudfilesystem.dto.RegisterResponse;
 import com.mizuka.cloudfilesystem.dto.RSAKeyPairDTO;
+import com.mizuka.cloudfilesystem.dto.SecurityQuestionChangeRequest;
+import com.mizuka.cloudfilesystem.dto.SecurityQuestionChangeResponse;
 import com.mizuka.cloudfilesystem.dto.UserProfileResponse;
 import com.mizuka.cloudfilesystem.dto.EmailChangeRequest;
 import com.mizuka.cloudfilesystem.dto.EmailChangeResponse;
@@ -26,8 +28,10 @@ import com.mizuka.cloudfilesystem.dto.ResetPasswordRequest;
 import com.mizuka.cloudfilesystem.dto.ResetPasswordResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mizuka.cloudfilesystem.entity.Administrator;
+import com.mizuka.cloudfilesystem.entity.SecurityQuestion;
 import com.mizuka.cloudfilesystem.entity.User;
 import com.mizuka.cloudfilesystem.mapper.AdministratorMapper;
+import com.mizuka.cloudfilesystem.mapper.SecurityQuestionMapper;
 import com.mizuka.cloudfilesystem.mapper.UserMapper;
 import com.mizuka.cloudfilesystem.util.JwtUtil;
 import com.mizuka.cloudfilesystem.util.RSAKeyManager;
@@ -58,6 +62,9 @@ public class UserService {
 
     @Autowired
     private AdministratorMapper administratorMapper;
+    
+    @Autowired
+    private SecurityQuestionMapper securityQuestionMapper;
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -86,6 +93,18 @@ public class UserService {
 
     // BCrypt密码加密器
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+
+    /**
+     * 根据用户ID获取用户信息
+     * @param userId 用户ID
+     * @return 用户对象，如果不存在返回null
+     */
+    public User getUserById(Long userId) {
+        if (userId == null) {
+            return null;
+        }
+        return userMapper.findById(userId);
+    }
 
     /**
      * 用户注册
@@ -187,7 +206,9 @@ public class UserService {
             user.setStorageUsed(0L);
             user.setStatus(1);  // 正常状态
             user.setSecurityQuestionId(data.getSecurityQuestion());
-            user.setSecurityAnswer(data.getSecurityAnswer());
+            // 使用 BCrypt 加密安全答案
+            String bcryptSecurityAnswer = passwordEncoder.encode(data.getSecurityAnswer());
+            user.setSecurityAnswer(bcryptSecurityAnswer);
 
             // 11. 插入数据库
             int result = userMapper.insertUser(user);
@@ -249,16 +270,27 @@ public class UserService {
             RSAKeyPairDTO keyPairDTO = (RSAKeyPairDTO) redisTemplate.opsForValue().get(redisKey);
 
             if (keyPairDTO == null) {
+                logger.error("[用户登录] RSA密钥对不存在 - SessionId: {}, RedisKey: {}", sessionId, redisKey);
                 return new LoginResponse(400, false, "会话已过期或无效，请重新获取公钥");
             }
 
+            logger.info("[用户登录] 找到RSA密钥对 - SessionId: {}, PublicKey预览: {}", 
+                sessionId, 
+                keyPairDTO.getPublicKey().substring(0, Math.min(50, keyPairDTO.getPublicKey().length())) + "...");
+
             // 重置RSA密钥对的过期时间（延长5分钟）
             redisTemplate.expire(redisKey, 5, TimeUnit.MINUTES);
+            logger.debug("[用户登录] 已重置RSA密钥对有效期 - SessionId: {}", sessionId);
 
+            logger.info("[用户登录] 开始解密密码 - SessionId: {}, EncryptedPassword长度: {}", 
+                sessionId, encryptedPassword != null ? encryptedPassword.length() : 0);
+            
             String decryptedPassword = RSAKeyManager.decryptWithPrivateKey(
                     encryptedPassword,
                     keyPairDTO.getPrivateKey()
             );
+            
+            logger.info("[用户登录] 密码解密成功 - SessionId: {}", sessionId);
 
             // 判断是邮箱还是用户ID
             boolean isEmail = userIdOrEmail.contains("@");
@@ -268,6 +300,8 @@ public class UserService {
             Object userObj = null;
             String storedPassword = null;
             String nickname = null;
+            String email = null;
+            String phone = null;
             LocalDateTime registeredAt = null;
 
             if (isEmail) {
@@ -279,6 +313,8 @@ public class UserService {
                     userIdNum = user.getId();
                     storedPassword = user.getPassword();
                     nickname = user.getNickname();
+                    email = user.getEmail();
+                    phone = user.getPhone();
                     registeredAt = user.getRegisteredAt();
                 }
             } else {
@@ -297,6 +333,8 @@ public class UserService {
                         userObj = admin;
                         storedPassword = admin.getPassword();
                         nickname = admin.getNickname();
+                        email = admin.getEmail();
+                        phone = admin.getPhone();
                         registeredAt = admin.getRegisteredAt();
                     }
                 } else {
@@ -307,6 +345,8 @@ public class UserService {
                         userObj = user;
                         storedPassword = user.getPassword();
                         nickname = user.getNickname();
+                        email = user.getEmail();
+                        phone = user.getPhone();
                         registeredAt = user.getRegisteredAt();
                     }
                 }
@@ -340,8 +380,9 @@ public class UserService {
                 administratorMapper.updateLastLogin(admin.getId());
             }
 
-            // 登录成功后，删除Redis中的密钥对（一次性使用）
-            redisTemplate.delete(redisKey);
+            // ⚠️ 注意：不在这里删除Redis中的密钥对
+            // 因为可能需要用于二次验证（解密密保答案等）
+            // 密钥对将在二次验证完成后或删除
 
             String token = jwtUtil.generateToken(
                     userIdNum,
@@ -361,7 +402,9 @@ public class UserService {
             response.setMessage("登录成功");
             response.setUserId(String.valueOf(userIdNum));
             response.setToken(token);
-            response.setNickname(nickname);
+            // 不再返回nickname字段
+            response.setEmail(email);
+            response.setPhone(phone);
             response.setUserType(userType);
             response.setHomeDirectory("user".equals(userType) ? "/users/" + userIdNum : "/admin/");
             response.setExpiresAt(expiresAt);
@@ -483,6 +526,12 @@ public class UserService {
                 ObjectMapper mapper = new ObjectMapper();
                 UserProfileResponse.UserData userData = mapper.readValue(cachedProfile, UserProfileResponse.UserData.class);
                 
+                // 确保 securityQuestion 不为 null
+                if (userData.getSecurityQuestion() == null) {
+                    userData.setSecurityQuestion("");
+                    logger.debug("[获取个人资料] 缓存中 securityQuestion 为 null，已设置为空字符串 - UserId: {}", userId);
+                }
+                
                 // 脱敏处理
                 userData.setEmail(maskEmail(userData.getEmail()));
                 userData.setPhone(maskPhone(userData.getPhone()));
@@ -497,8 +546,10 @@ public class UserService {
             String nickname = null;
             String email = null;
             String phone = null;
+            String securityQuestion = null;
             Long storageUsed = 0L;
             Long storageQuota = 0L;
+            Integer securityQuestionId = null;
 
             // 判断是管理员还是普通用户
             if (userId >= 1 && userId <= 9999) {
@@ -525,25 +576,43 @@ public class UserService {
                     phone = user.getPhone();
                     storageUsed = user.getStorageUsed();
                     storageQuota = user.getStorageQuota();
+                    securityQuestionId = user.getSecurityQuestionId();
                 }
             }
 
             if (nickname == null) {
                 return new UserProfileResponse(404, false, "用户不存在", null);
             }
+            
+            // 5. 获取安全问题内容（仅对普通用户）
+            if (userId >= 10001) {
+                if (securityQuestionId != null) {
+                    logger.info("[获取个人资料] 开始获取安全问题 - UserId: {}, QuestionId: {}", userId, securityQuestionId);
+                    securityQuestion = getSecurityQuestionContent(securityQuestionId);
+                    logger.info("[获取个人资料] 安全问题获取结果 - UserId: {}, QuestionId: {}, Result: {}", 
+                        userId, securityQuestionId, securityQuestion != null ? "成功" : "null");
+                } else {
+                    logger.info("[获取个人资料] 用户未设置密保问题 - UserId: {}", userId);
+                    securityQuestion = ""; // 未设置时返回空字符串
+                }
+            } else {
+                logger.info("[获取个人资料] 管理员用户，无安全问题 - UserId: {}", userId);
+                securityQuestion = "";
+            }
 
-            // 5. 构建未脱敏的数据对象（用于缓存）
+            // 6. 构建未脱敏的数据对象（用于缓存）
             // 注意：avatar 为 null 时转为空字符串，保持与前端约定一致
             UserProfileResponse.UserData rawData = new UserProfileResponse.UserData(
                 avatar != null ? avatar : "",
-                nickname,
                 email != null ? email : "",
+                nickname,
                 phone != null ? phone : "",
-                storageUsed,
-                storageQuota
+                securityQuestion != null ? securityQuestion : "",
+                storageQuota,
+                storageUsed
             );
 
-            // 6. 将未脱敏的数据存入Redis缓存（JSON格式，过期时间与JWT令牌一致）
+            // 7. 将未脱敏的数据存入Redis缓存（JSON格式，过期时间与JWT令牌一致）
             try {
                 ObjectMapper mapper = new ObjectMapper();
                 String jsonProfile = mapper.writeValueAsString(rawData);
@@ -562,7 +631,7 @@ public class UserService {
                 logger.warn("[获取个人资料] 缓存设置失败 - {}", e.getMessage());
             }
 
-            // 7. 脱敏处理（返回给前端）
+            // 8. 脱敏处理（返回给前端）
             rawData.setEmail(maskEmail(rawData.getEmail()));
             rawData.setPhone(maskPhone(rawData.getPhone()));
 
@@ -571,6 +640,91 @@ public class UserService {
         } catch (Exception e) {
             e.printStackTrace();
             return new UserProfileResponse(500, false, "获取失败：" + e.getMessage(), null);
+        }
+    }
+
+    /**
+     * 获取安全问题内容（直接从数据库查询）
+     * @param questionId 安全问题ID
+     * @return 安全问题内容，如果不存在返回null
+     */
+    private String getSecurityQuestionContent(Integer questionId) {
+        if (questionId == null) {
+            return null;
+        }
+        
+        try {
+            // 从数据库查询安全问题内容
+            logger.debug("[获取安全问题] 查询数据库 - QuestionId: {}", questionId);
+            SecurityQuestion question = securityQuestionMapper.selectById(questionId);
+            
+            if (question != null && question.getQuestionText() != null) {
+                String questionText = question.getQuestionText();
+                logger.debug("[获取安全问题] 查询成功 - QuestionId: {}, 问题: {}", questionId, questionText);
+                return questionText;
+            }
+            
+            logger.warn("[获取安全问题] 问题不存在 - QuestionId: {}", questionId);
+            return null;
+            
+        } catch (Exception e) {
+            logger.error("[获取安全问题] 异常 - QuestionId: {}, 错误: {}", questionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 验证安全答案（兼容明文和BCrypt加密）
+     * @param plainAnswer 明文答案
+     * @param storedAnswer 数据库中存储的答案（可能是明文或BCrypt）
+     * @return 是否匹配
+     */
+    private boolean verifySecurityAnswer(String plainAnswer, String storedAnswer) {
+        if (plainAnswer == null || storedAnswer == null) {
+            return false;
+        }
+        
+        // 判断是否为 BCrypt 加密（BCrypt 哈希以 $2a$, $2b$, 或 $2y$ 开头）
+        if (storedAnswer.startsWith("$2a$") || storedAnswer.startsWith("$2b$") || storedAnswer.startsWith("$2y$")) {
+            // BCrypt 加密，使用 matches 比较
+            return passwordEncoder.matches(plainAnswer, storedAnswer);
+        } else {
+            // 明文存储，直接比较
+            return plainAnswer.equals(storedAnswer);
+        }
+    }
+
+    /**
+     * 检查并迁移安全答案为 BCrypt 格式
+     * @param userId 用户ID
+     * @param storedAnswer 数据库中存储的答案
+     * @return 如果已迁移返回 true，否则返回 false
+     */
+    private boolean migrateSecurityAnswerToBCrypt(Long userId, String storedAnswer) {
+        if (storedAnswer == null || storedAnswer.isEmpty()) {
+            return false;
+        }
+        
+        // 如果已经是 BCrypt 格式，不需要迁移
+        if (storedAnswer.startsWith("$2a$") || storedAnswer.startsWith("$2b$") || storedAnswer.startsWith("$2y$")) {
+            return false; // 已经迁移
+        }
+        
+        // 明文存储，需要迁移为 BCrypt
+        try {
+            String bcryptAnswer = passwordEncoder.encode(storedAnswer);
+            int result = userMapper.updateSecurityQuestion(userId, null, bcryptAnswer); // 只更新答案，不改变问题ID
+            
+            if (result > 0) {
+                logger.info("[安全答案迁移] 成功 - UserId: {}, 从明文迁移到BCrypt", userId);
+                return true;
+            } else {
+                logger.error("[安全答案迁移] 失败 - UserId: {}", userId);
+                return false;
+            }
+        } catch (Exception e) {
+            logger.error("[安全答案迁移] 异常 - UserId: {}, 错误: {}", userId, e.getMessage());
+            return false;
         }
     }
 
@@ -758,9 +912,36 @@ public class UserService {
             redisTemplate.delete(redisKey);
             logger.debug("[修改密码] RSA密钥对已删除 - UserId: {}", userId);
 
-            // 11. 清除个人资料缓存（因为密码已更改）
+            // 11. 同步更新Redis缓存（密码不在缓存中，但需要清除sessionId相关的验证码缓存）
             String profileCacheKey = "profile:" + userId;
-            profileRedisTemplate.delete(profileCacheKey);
+            String cachedProfile = profileRedisTemplate.opsForValue().get(profileCacheKey);
+            
+            if (cachedProfile != null) {
+                try {
+                    // 解析缓存的JSON数据
+                    ObjectMapper mapper = new ObjectMapper();
+                    UserProfileResponse.UserData userData = mapper.readValue(cachedProfile, UserProfileResponse.UserData.class);
+                    
+                    // 将更新后的数据重新存入Redis（保持原有的过期时间）
+                    Long remainingTtl = profileRedisTemplate.getExpire(profileCacheKey, TimeUnit.SECONDS);
+                    if (remainingTtl != null && remainingTtl > 0) {
+                        String updatedJson = mapper.writeValueAsString(userData);
+                        profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, remainingTtl, TimeUnit.SECONDS);
+                        logger.info("[修改密码] Redis缓存已刷新 - UserId: {}, 剩余TTL: {}秒", userId, remainingTtl);
+                    } else {
+                        // 如果无法获取剩余时间，使用默认7天
+                        String updatedJson = mapper.writeValueAsString(userData);
+                        profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, 7, TimeUnit.DAYS);
+                        logger.info("[修改密码] Redis缓存已刷新（默认7天） - UserId: {}", userId);
+                    }
+                } catch (Exception e) {
+                    logger.warn("[修改密码] Redis缓存刷新失败，将删除缓存 - {}", e.getMessage());
+                    // 如果更新失败，则删除缓存
+                    profileRedisTemplate.delete(profileCacheKey);
+                }
+            } else {
+                logger.debug("[修改密码] Redis缓存不存在，无需更新 - UserId: {}", userId);
+            }
             
             // 12. 清除sessionId相关的验证码缓存（如果存在）
             String emailCodeKey = "email:code:" + request.getSessionId();
@@ -1305,9 +1486,10 @@ public class UserService {
     /**
      * 邮箱验证码验证（重置密码第二步）
      * @param request 验证请求对象
+     * @param deviceFingerprint 设备指纹
      * @return 验证响应对象
      */
-    public ResetPasswordVerifyResponse verifyEmailForReset(ResetPasswordEmailVerifyRequest request) {
+    public ResetPasswordVerifyResponse verifyEmailForReset(ResetPasswordEmailVerifyRequest request, String deviceFingerprint) {
         try {
             // 1. 验证请求参数
             if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
@@ -1356,6 +1538,7 @@ public class UserService {
                 "email",
                 user.getEmail(),
                 null,
+                deviceFingerprint,
                 600L  // 600秒 = 10分钟
             );
 
@@ -1373,9 +1556,10 @@ public class UserService {
     /**
      * 手机验证码验证（重置密码第二步）
      * @param request 验证请求对象
+     * @param deviceFingerprint 设备指纹
      * @return 验证响应对象
      */
-    public ResetPasswordVerifyResponse verifyPhoneForReset(ResetPasswordPhoneVerifyRequest request) {
+    public ResetPasswordVerifyResponse verifyPhoneForReset(ResetPasswordPhoneVerifyRequest request, String deviceFingerprint) {
         try {
             // 1. 验证请求参数
             if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
@@ -1424,6 +1608,7 @@ public class UserService {
                 "phone",
                 null,
                 user.getPhone(),
+                deviceFingerprint,
                 600L  // 600秒 = 10分钟
             );
 
@@ -1441,9 +1626,10 @@ public class UserService {
     /**
      * 密保问题答案验证（重置密码第二步）
      * @param request 验证请求对象
+     * @param deviceFingerprint 设备指纹
      * @return 验证响应对象
      */
-    public ResetPasswordVerifyResponse verifySecurityAnswerForReset(ResetPasswordSecurityVerifyRequest request) {
+    public ResetPasswordVerifyResponse verifySecurityAnswerForReset(ResetPasswordSecurityVerifyRequest request, String deviceFingerprint) {
         try {
             // 1. 验证请求参数
             if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
@@ -1496,12 +1682,15 @@ public class UserService {
                 return new ResetPasswordVerifyResponse(400, false, "用户未设置密保问题", null);
             }
 
-            // 6. 验证答案（直接比较，因为数据库中存储的是明文）
-            // 注意：如果数据库中存储的是哈希值，需要使用bcrypt.compare
-            if (!securityAnswer.equals(user.getSecurityAnswer())) {
+            // 6. 验证答案（兼容明文和BCrypt）
+            boolean isMatch = verifySecurityAnswer(securityAnswer, user.getSecurityAnswer());
+            if (!isMatch) {
                 logger.warn("[重置密码-密保验证] 失败 - 答案错误 - UserId: {}", request.getUserId());
                 return new ResetPasswordVerifyResponse(400, false, "密保答案错误", null);
             }
+            
+            // 7. 如果是明文存储，自动迁移为BCrypt
+            migrateSecurityAnswerToBCrypt(user.getId(), user.getSecurityAnswer());
 
             logger.info("[重置密码-密保验证] 成功 - UserId: {}", user.getId());
 
@@ -1511,6 +1700,7 @@ public class UserService {
                 "security",
                 null,
                 null,
+                deviceFingerprint,
                 600L  // 600秒 = 10分钟
             );
 
@@ -1537,9 +1727,10 @@ public class UserService {
      * 重置密码（最后一步）
      * @param token JWT令牌（从Authorization头获取）
      * @param request 重置密码请求对象
+     * @param deviceFingerprint 当前请求的设备指纹
      * @return 重置密码响应对象
      */
-    public ResetPasswordResponse resetPassword(String token, ResetPasswordRequest request) {
+    public ResetPasswordResponse resetPassword(String token, ResetPasswordRequest request, String deviceFingerprint) {
         try {
             // 1. 验证JWT令牌
             if (token == null || token.trim().isEmpty()) {
@@ -1579,9 +1770,23 @@ public class UserService {
                 return new ResetPasswordResponse(401, false, "验证令牌无效");
             }
 
+            // 5. 校验设备指纹是否一致
+            String tokenDeviceFingerprint = jwtUtil.getDeviceFingerprintFromResetToken(token);
+            if (tokenDeviceFingerprint != null && deviceFingerprint != null) {
+                if (!tokenDeviceFingerprint.equals(deviceFingerprint)) {
+                    logger.warn("[重置密码] 失败 - 设备指纹不一致 - UserId: {}, Token设备: {}, 请求设备: {}",
+                        userId, tokenDeviceFingerprint, deviceFingerprint);
+                    return new ResetPasswordResponse(403, false, "设备不匹配，请重新验证");
+                }
+                logger.debug("[重置密码] 设备指纹验证通过 - UserId: {}", userId);
+            } else {
+                logger.warn("[重置密码] 警告 - 设备指纹缺失 - Token设备: {}, 请求设备: {}",
+                    tokenDeviceFingerprint, deviceFingerprint);
+            }
+
             logger.info("[重置密码] 令牌验证成功 - UserId: {}", userId);
 
-            // 5. 验证请求参数
+            // 6. 验证请求参数
             if (request.getSessionId() == null || request.getSessionId().trim().isEmpty()) {
                 logger.warn("[重置密码] 失败 - 会话ID不能为空");
                 return new ResetPasswordResponse(400, false, "会话ID不能为空");
@@ -1592,7 +1797,7 @@ public class UserService {
                 return new ResetPasswordResponse(400, false, "加密密码不能为空");
             }
 
-            // 6. 从 Redis 获取 RSA 密钥对
+            // 7. 从 Redis 获取 RSA 密钥对
             String rsaKey = RSA_KEY_PREFIX + request.getSessionId();
             RSAKeyPairDTO keyPairDTO = (RSAKeyPairDTO) redisTemplate.opsForValue().get(rsaKey);
 
@@ -1602,7 +1807,7 @@ public class UserService {
             }
             logger.debug("[重置密码] RSA密钥对获取成功 - SessionId: {}", request.getSessionId());
 
-            // 7. 使用私钥解密密码
+            // 8. 使用私钥解密密码
             logger.debug("[重置密码] 开始解密密码 - SessionId: {}", request.getSessionId());
             String newPassword = RSAKeyManager.decryptWithPrivateKey(
                 request.getEncryptedNewPassword(),
@@ -1610,13 +1815,13 @@ public class UserService {
             );
             logger.debug("[重置密码] 密码解密完成 - SessionId: {}", request.getSessionId());
 
-            // 8. 验证密码格式（长度6-14位）
+            // 9. 验证密码格式（长度6-14位）
             if (newPassword.length() < 6 || newPassword.length() > 14) {
                 logger.warn("[重置密码] 失败 - 密码长度不符合要求 - Length: {}", newPassword.length());
                 return new ResetPasswordResponse(400, false, "密码长度必须为6-14位");
             }
 
-            // 9. 查找用户
+            // 10. 查找用户
             User user = userMapper.findById(userId);
             if (user == null) {
                 logger.warn("[重置密码] 失败 - 用户不存在 - UserId: {}", userId);
@@ -1625,11 +1830,11 @@ public class UserService {
 
             logger.info("[重置密码] 找到用户 - UserId: {}, Nickname: {}", user.getId(), user.getNickname());
 
-            // 10. 使用 BCrypt 哈希密码
+            // 11. 使用 BCrypt 哈希密码
             String hashedPassword = passwordEncoder.encode(newPassword);
             logger.debug("[重置密码] 密码已哈希 - UserId: {}", userId);
 
-            // 11. 更新数据库中的密码
+            // 12. 更新数据库中的密码
             int result = userMapper.updatePassword(userId, hashedPassword);
             if (result <= 0) {
                 logger.error("[重置密码] 失败 - 密码更新失败 - UserId: {}", userId);
@@ -1638,12 +1843,12 @@ public class UserService {
 
             logger.info("[重置密码] 密码更新成功 - UserId: {}", userId);
 
-            // 12. 标记令牌已使用（存储到Redis，24小时过期）
+            // 13. 标记令牌已使用（存储到Redis，24小时过期）
             redisTemplate.opsForValue().set(usedTokenKey, true, 24, java.util.concurrent.TimeUnit.HOURS);
             logger.debug("[重置密码] 令牌已标记为已使用 - Token预览: {}", 
                 token.length() > 20 ? token.substring(0, 20) + "..." : token);
 
-            // 13. 清除RSA密钥对（一次性使用）
+            // 14. 清除RSA密钥对（一次性使用）
             redisTemplate.delete(rsaKey);
             logger.debug("[重置密码] 已清除RSA密钥对 - SessionId: {}", request.getSessionId());
 
@@ -1659,6 +1864,178 @@ public class UserService {
             logger.error("[重置密码] 异常 - {}", e.getMessage(), e);
             e.printStackTrace();
             return new ResetPasswordResponse(500, false, "服务器内部错误：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 修改用户密保问题
+     * @param token JWT令牌，用于获取用户ID
+     * @param request 修改密保问题请求对象
+     * @return 修改密保问题响应对象
+     */
+    public SecurityQuestionChangeResponse changeSecurityQuestion(String token, SecurityQuestionChangeRequest request) {
+        try {
+            // 1. 验证参数
+            if (request == null) {
+                logger.warn("[修改密保问题] 失败 - 请求对象为空");
+                return new SecurityQuestionChangeResponse(false, "缺少必要参数");
+            }
+
+            String sessionId = request.getSessionId();
+            String encryptedOldAnswer = request.getEncryptedOldAnswer();
+            Integer newSecurityQuestionId = request.getNewSecurityQuestionId();
+            String encryptedNewAnswer = request.getEncryptedNewAnswer();
+
+            if (sessionId == null || sessionId.trim().isEmpty() ||
+                encryptedOldAnswer == null || encryptedOldAnswer.trim().isEmpty() ||
+                newSecurityQuestionId == null ||
+                encryptedNewAnswer == null || encryptedNewAnswer.trim().isEmpty()) {
+                logger.warn("[修改密保问题] 失败 - 参数缺失");
+                return new SecurityQuestionChangeResponse(false, "缺少必要参数");
+            }
+
+            // 2. 从JWT令牌中获取用户ID
+            Long userId = jwtUtil.getUserIdFromToken(token);
+            if (userId == null) {
+                logger.warn("[修改密保问题] 失败 - 无效的用户令牌");
+                return new SecurityQuestionChangeResponse(false, "无效的用户令牌");
+            }
+
+            // 3. 验证是否为普通用户（管理员没有密保问题）
+            if (userId < 10001) {
+                logger.warn("[修改密保问题] 失败 - 管理员用户不能修改密保问题 - UserId: {}", userId);
+                return new SecurityQuestionChangeResponse(false, "管理员用户不能修改密保问题");
+            }
+
+            // 4. 从 Redis 获取 RSA 密钥对
+            String redisKey = RSA_KEY_PREFIX + sessionId;
+            RSAKeyPairDTO keyPairDTO = (RSAKeyPairDTO) redisTemplate.opsForValue().get(redisKey);
+
+            if (keyPairDTO == null) {
+                logger.warn("[修改密保问题] 失败 - 会话已过期 - SessionId: {}", sessionId);
+                return new SecurityQuestionChangeResponse(false, "会话已过期，请重新操作");
+            }
+
+            // 5. 查询用户当前信息
+            User user = userMapper.findById(userId);
+            if (user == null) {
+                logger.warn("[修改密保问题] 失败 - 用户不存在 - UserId: {}", userId);
+                return new SecurityQuestionChangeResponse(false, "用户不存在");
+            }
+
+            // 6. 验证用户是否设置了密保问题
+            if (user.getSecurityQuestionId() == null || user.getSecurityAnswer() == null) {
+                logger.warn("[修改密保问题] 失败 - 用户未设置密保问题 - UserId: {}", userId);
+                return new SecurityQuestionChangeResponse(false, "您还未设置密保问题");
+            }
+
+            // 7. 使用私钥解密旧答案
+            String decryptedOldAnswer;
+            try {
+                decryptedOldAnswer = RSAKeyManager.decryptWithPrivateKey(
+                    encryptedOldAnswer,
+                    keyPairDTO.getPrivateKey()
+                );
+            } catch (Exception e) {
+                logger.warn("[修改密保问题] 失败 - 旧答案解密失败: {}", e.getMessage());
+                return new SecurityQuestionChangeResponse(false, "旧答案解密失败");
+            }
+
+            // 8. 验证旧答案是否正确（兼容明文和BCrypt）
+            boolean isOldAnswerMatch = verifySecurityAnswer(decryptedOldAnswer, user.getSecurityAnswer());
+            if (!isOldAnswerMatch) {
+                logger.warn("[修改密保问题] 失败 - 旧答案错误 - UserId: {}", userId);
+                return new SecurityQuestionChangeResponse(false, "旧密保答案错误");
+            }
+            
+            // 8.5. 如果是明文存储，自动迁移为BCrypt
+            migrateSecurityAnswerToBCrypt(userId, user.getSecurityAnswer());
+
+            // 9. 验证新的安全问题是否存在
+            SecurityQuestion newQuestion = securityQuestionMapper.selectById(newSecurityQuestionId);
+            if (newQuestion == null) {
+                logger.warn("[修改密保问题] 失败 - 新的安全问题不存在 - QuestionId: {}", newSecurityQuestionId);
+                return new SecurityQuestionChangeResponse(false, "新的安全问题不存在");
+            }
+
+            // 10. 使用私钥解密新答案
+            String decryptedNewAnswer;
+            try {
+                decryptedNewAnswer = RSAKeyManager.decryptWithPrivateKey(
+                    encryptedNewAnswer,
+                    keyPairDTO.getPrivateKey()
+                );
+            } catch (Exception e) {
+                logger.warn("[修改密保问题] 失败 - 新答案解密失败: {}", e.getMessage());
+                return new SecurityQuestionChangeResponse(false, "新答案解密失败");
+            }
+
+            // 11. 验证新答案不为空
+            if (decryptedNewAnswer == null || decryptedNewAnswer.trim().isEmpty()) {
+                logger.warn("[修改密保问题] 失败 - 新答案为空");
+                return new SecurityQuestionChangeResponse(false, "新答案不能为空");
+            }
+
+            // 12. 使用 BCrypt 加密新答案
+            String bcryptNewAnswer = passwordEncoder.encode(decryptedNewAnswer);
+
+            // 13. 更新数据库
+            int updateResult = userMapper.updateSecurityQuestion(userId, newSecurityQuestionId, bcryptNewAnswer);
+
+            if (updateResult <= 0) {
+                logger.error("[修改密保问题] 失败 - 数据库更新失败 - UserId: {}", userId);
+                return new SecurityQuestionChangeResponse(false, "修改失败，请稍后重试");
+            }
+
+            logger.info("[修改密保问题] 成功 - UserId: {}, 新问题ID: {}", userId, newSecurityQuestionId);
+
+            // 14. 同步更新Redis缓存中的安全问题内容
+            String profileCacheKey = "profile:" + userId;
+            String cachedProfile = profileRedisTemplate.opsForValue().get(profileCacheKey);
+            
+            if (cachedProfile != null) {
+                try {
+                    // 解析缓存的JSON数据
+                    ObjectMapper mapper = new ObjectMapper();
+                    UserProfileResponse.UserData userData = mapper.readValue(cachedProfile, UserProfileResponse.UserData.class);
+                    
+                    // 获取新安全问题的文本内容
+                    String newQuestionText = getSecurityQuestionContent(newSecurityQuestionId);
+                    
+                    // 更新安全问题字段
+                    userData.setSecurityQuestion(newQuestionText != null ? newQuestionText : "");
+                    
+                    // 将更新后的数据重新存入Redis（保持原有的过期时间）
+                    Long remainingTtl = profileRedisTemplate.getExpire(profileCacheKey, TimeUnit.SECONDS);
+                    if (remainingTtl != null && remainingTtl > 0) {
+                        String updatedJson = mapper.writeValueAsString(userData);
+                        profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, remainingTtl, TimeUnit.SECONDS);
+                        logger.info("[修改密保问题] Redis缓存已同步更新 - UserId: {}, 新问题: {}, 剩余TTL: {}秒", userId, newQuestionText, remainingTtl);
+                    } else {
+                        // 如果无法获取剩余时间，使用默认7天
+                        String updatedJson = mapper.writeValueAsString(userData);
+                        profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, 7, TimeUnit.DAYS);
+                        logger.info("[修改密保问题] Redis缓存已同步更新（默认7天） - UserId: {}, 新问题: {}", userId, newQuestionText);
+                    }
+                } catch (Exception e) {
+                    logger.warn("[修改密保问题] Redis缓存同步更新失败，将删除缓存 - {}", e.getMessage());
+                    // 如果更新失败，则删除缓存
+                    profileRedisTemplate.delete(profileCacheKey);
+                }
+            } else {
+                logger.debug("[修改密保问题] Redis缓存不存在，无需更新 - UserId: {}", userId);
+            }
+
+            // 15. 清除RSA密钥对（一次性使用）
+            redisTemplate.delete(redisKey);
+            logger.debug("[修改密保问题] 已清除RSA密钥对 - SessionId: {}", sessionId);
+
+            return new SecurityQuestionChangeResponse(true, "密保问题修改成功");
+
+        } catch (Exception e) {
+            logger.error("[修改密保问题] 异常 - {}", e.getMessage(), e);
+            e.printStackTrace();
+            return new SecurityQuestionChangeResponse(false, "服务器内部错误：" + e.getMessage());
         }
     }
 }

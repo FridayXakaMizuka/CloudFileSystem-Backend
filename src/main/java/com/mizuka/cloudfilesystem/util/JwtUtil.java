@@ -48,11 +48,44 @@ public class JwtUtil {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("userId", userId)
-                .claim("nickname", nickname)
                 .claim("userType", userType)
                 .claim("registeredAt", registeredAt != null ? 
                     registeredAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() : null)
                 .claim("homeDirectory", "user".equals(userType) ? "/users/" + userId : "/admin/")
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    /**
+     * 生成包含设备指纹的JWT令牌
+     * @param userId 用户ID
+     * @param nickname 昵称
+     * @param userType 用户类型
+     * @param registeredAt 注册时间
+     * @param expirationSeconds 过期时间（秒）
+     * @param deviceFingerprint 设备指纹
+     * @return JWT令牌
+     */
+    public String generateTokenWithDeviceFingerprint(Long userId, String nickname, String userType,
+                                                     LocalDateTime registeredAt, Long expirationSeconds,
+                                                     String deviceFingerprint) {
+
+        long expSeconds = (expirationSeconds != null && expirationSeconds > 0)
+                ? expirationSeconds : defaultExpiration;
+
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + expSeconds * 1000);
+
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("userId", userId)
+                .claim("userType", userType)
+                .claim("registeredAt", registeredAt != null ? 
+                    registeredAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() : null)
+                .claim("homeDirectory", "user".equals(userType) ? "/users/" + userId : "/admin/")
+                .claim("deviceFingerprint", deviceFingerprint)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(getSigningKey())
@@ -87,15 +120,47 @@ public class JwtUtil {
     }
 
     /**
+     * 从JWT令牌中获取设备指纹
+     * @param token JWT令牌
+     * @return 设备指纹，如果不存在则返回null
+     */
+    public String getDeviceFingerprintFromToken(String token) {
+        try {
+            Claims claims = parseToken(token);
+            return claims.get("deviceFingerprint", String.class);
+        } catch (Exception e) {
+            logger.warn("[JWT解析] 获取设备指纹失败 - {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 从resetToken中获取设备指纹
+     * @param token resetToken
+     * @return 设备指纹，如果不存在则返回null
+     */
+    public String getDeviceFingerprintFromResetToken(String token) {
+        try {
+            Claims claims = validateResetToken(token);
+            return claims.get("deviceFingerprint", String.class);
+        } catch (Exception e) {
+            logger.warn("[resetToken解析] 获取设备指纹失败 - {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 生成重置密码临时令牌（resetToken）
      * @param userId 用户ID
      * @param verifiedBy 验证方式（email/phone/security）
      * @param email 邮箱（可选）
      * @param phone 手机号（可选）
+     * @param deviceFingerprint 设备指纹
      * @param expirationSeconds 有效期（秒），默认600秒（10分钟）
      * @return JWT令牌
      */
-    public String generateResetToken(Long userId, String verifiedBy, String email, String phone, Long expirationSeconds) {
+    public String generateResetToken(Long userId, String verifiedBy, String email, String phone, 
+                                     String deviceFingerprint, Long expirationSeconds) {
         long expSeconds = (expirationSeconds != null && expirationSeconds > 0) ? expirationSeconds : 600;
 
         Date now = new Date();
@@ -107,6 +172,7 @@ public class JwtUtil {
                 .claim("verifiedBy", verifiedBy)
                 .claim("email", email)
                 .claim("phone", phone)
+                .claim("deviceFingerprint", deviceFingerprint)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(getSigningKey())
