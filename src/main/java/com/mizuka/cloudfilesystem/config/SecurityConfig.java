@@ -1,5 +1,6 @@
 package com.mizuka.cloudfilesystem.config;
 
+import com.mizuka.cloudfilesystem.filter.JwtAuthenticationFilter;
 import com.mizuka.cloudfilesystem.filter.SecurityHeaderFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;

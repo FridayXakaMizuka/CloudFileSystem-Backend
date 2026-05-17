@@ -1,4 +1,4 @@
-package com.mizuka.cloudfilesystem.config;
+package com.mizuka.cloudfilesystem.filter;
 
 import com.mizuka.cloudfilesystem.util.JwtUtil;
 import jakarta.servlet.FilterChain;

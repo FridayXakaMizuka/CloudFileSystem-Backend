@@ -1,8 +1,9 @@
 -- ============================================
--- CloudFileSystem 完整数据库建表脚本
+-- CloudFileSystem 数据库初始化脚本（含测试数据）
 -- 数据库: cloud_file_database
 -- 端口: 3306
 -- 字符集: utf8mb4
+-- 生成时间: 2026-05-11
 -- ============================================
 
 -- 创建数据库（如果不存在）
@@ -374,24 +375,17 @@ CREATE TABLE directory_permissions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='目录权限表';
 
 -- ============================================
--- 完成提示
+-- 插入测试数据
 -- ============================================
-SELECT '数据库表创建完成！' AS message;
-SELECT '已创建以下表格：' AS info;
-SELECT '1. users - 用户表' AS table1;
-SELECT '2. administrators - 管理员表' AS table2;
-SELECT '3. security_questions - 安全问题表' AS table3;
-SELECT '4. user_trusted_devices - 用户信任设备表' AS table4;
-SELECT '5. two_factor_verification_logs - 二次验证日志表' AS table5;
-SELECT '6. file_metadata - 文件元数据表' AS table6;
-SELECT '7. upload_tasks - 上传任务表' AS table7;
-SELECT '8. directory_nodes - 目录节点表' AS table8;
-SELECT '9. file_chunks - 文件分片表' AS table9;
-SELECT '10. directory_permissions - 目录权限表' AS table10;
 
--- ============================================
--- 插入原始数据
--- ============================================
+-- 插入测试用户数据（来自备份文件）
+INSERT INTO users (id, nickname, password, avatar, email, phone, storage_quota, storage_used, status, security_question_id, security_answer, registered_at, last_login_at) VALUES
+(10001, 'mizuka', '$2a$10$2Sxwl8cNSGXpzJTzfP8JQ.Y6AEXtLFcn2WmbGRdPb7rV.ZwK.HNqK', '/file/download/13b2eb67-498c-4ad1-be20-74bddc8815c6_0FBBEDD958EAD11E0F652958469642A6.jpg', '467915465@qq.com', '13854280627', 10737418240, 0, 1, 1, '$2a$10$daB/7daJ1arpoFkqG83R0uB5Uaigh5XXB4gf7wsOyitylQnPoCsD2', '2026-04-29 19:59:40', '2026-05-05 00:50:26'),
+(10002, 'test_02', '$2a$10$8WYkXIuTQ1Iqrb5p/UIlkuJSvF37SzY4r0EFf0NaaAoMfWAJSf6Fq', '/file/download/e1e41484-58e3-44de-8558-9b03fa750b2f_0.jpg', '780347773@qq.com', '18390838406', 10737418240, 0, 1, 2, '$2a$10$n1/GTkh3GKrdbDCGXnKBMOGHgrOfT48XojWDhIQ903GPf5sadUpw6', '2026-04-29 20:05:51', '2026-05-05 00:32:58'),
+(10003, 'test03030303', '$2a$10$dzLp7/8oMCP7f2Jw3a0LreytZgqur4jr4gHM2Oe/CwgsgFZy3Z4Ea', NULL, '12345678@123.com', '15522222222', 10737418240, 0, 1, 4, '$2a$10$gGhsX7mjz7xAMsUlkZso5.nOFScDQZawzIBtj4eWr7WB8L1zhe35W', '2026-04-29 22:54:41', '2026-05-05 00:30:02'),
+(10004, 'ayako', '$2a$10$8bnOAX9rtrz.o4jwus5.QOMuo8pt8HWeiv7/qorgwZN9.pA5bHl8.', '/file/download/10030ce0-b780-4c07-9299-2201c4e42d6b_570FBA77FED53ADCCAFD9279377E40C2.png', '3032574954@qq.com', '', 10737418240, 0, 1, 3, '$2a$10$AulMmDsa/9whqJpzvFr3gO6m8MSt5Y2ifvGIZ3S9Obc0c4H/PS8Ee', '2026-05-03 20:43:10', '2026-05-05 00:34:13');
+
+
 -- 插入根节点（同时也是管理员根目录）
 INSERT INTO directory_nodes (id, parent_id, user_id, node_type, name, path, level, sort_order) VALUES
     (1, NULL, 0, 'folder', '_root', '/_root', 0, 0);
@@ -416,7 +410,7 @@ INSERT INTO directory_nodes (parent_id, user_id, node_type, name, path, level, s
 INSERT INTO directory_nodes (parent_id, user_id, node_type, name, path, level, sort_order) VALUES
     ((SELECT id FROM directory_nodes WHERE path = '/_root/files'), 0, 'folder', 'users', '/_root/files/users', 2, 0);
 
--- 为现有用户创建根目录（假设用户ID从10001开始）
+-- 为现有用户创建根目录
 INSERT INTO directory_nodes (parent_id, user_id, node_type, name, path, level, sort_order)
 SELECT
     (SELECT id FROM directory_nodes WHERE path = '/_root/files/users'),
@@ -428,3 +422,42 @@ SELECT
     0
 FROM users u
 WHERE u.id >= 10001;
+
+-- 插入头像文件元数据（确保头像可以下载）
+INSERT INTO file_metadata (user_id, file_hash, original_filename, stored_filename, file_size, mime_type, extension, storage_path, storage_type, upload_status, is_public, download_count, uploaded_at, created_at, updated_at) VALUES
+(10001, '0FBBEDD958EAD11E0F652958469642A6', 'avatar.jpg', '13b2eb67-498c-4ad1-be20-74bddc8815c6_0FBBEDD958EAD11E0F652958469642A6.jpg', 102400, 'image/jpeg', 'jpg', '/_root/avatar/13b2eb67-498c-4ad1-be20-74bddc8815c6_0FBBEDD958EAD11E0F652958469642A6.jpg', 'local', 'completed', 0, 0, '2026-04-29 19:59:40', '2026-04-29 19:59:40', '2026-04-29 19:59:40'),
+(10002, 'e1e41484-58e3-44de-8558-9b03fa750b2f_0', 'avatar.jpg', 'e1e41484-58e3-44de-8558-9b03fa750b2f_0.jpg', 85600, 'image/jpeg', 'jpg', '/_root/avatar/e1e41484-58e3-44de-8558-9b03fa750b2f_0.jpg', 'local', 'completed', 0, 0, '2026-04-29 20:05:51', '2026-04-29 20:05:51', '2026-04-29 20:05:51'),
+(10004, '570FBA77FED53ADCCAFD9279377E40C2', 'avatar.png', '10030ce0-b780-4c07-9299-2201c4e42d6b_570FBA77FED53ADCCAFD9279377E40C2.png', 125800, 'image/png', 'png', '/_root/avatar/10030ce0-b780-4c07-9299-2201c4e42d6b_570FBA77FED53ADCCAFD9279377E40C2.png', 'local', 'completed', 0, 0, '2026-05-03 20:43:10', '2026-05-03 20:43:10', '2026-05-03 20:43:10');
+
+-- 为头像文件创建目录节点
+INSERT INTO directory_nodes (parent_id, user_id, node_type, name, path, level, sort_order, file_metadata_id, file_size, mime_type)
+SELECT
+    (SELECT id FROM directory_nodes WHERE path = '/_root/avatar'),
+    fm.user_id,
+    'file',
+    fm.stored_filename,
+    CONCAT('/_root/avatar/', fm.stored_filename),
+    2,
+    0,
+    fm.id,
+    fm.file_size,
+    fm.mime_type
+FROM file_metadata fm
+WHERE fm.original_filename LIKE 'avatar.%';
+
+-- ============================================
+-- 完成提示
+-- ============================================
+SELECT '数据库表创建完成！' AS message;
+SELECT '已创建以下表格：' AS info;
+SELECT '1. users - 用户表' AS table1;
+SELECT '2. administrators - 管理员表' AS table2;
+SELECT '3. security_questions - 安全问题表' AS table3;
+SELECT '4. user_trusted_devices - 用户信任设备表' AS table4;
+SELECT '5. two_factor_verification_logs - 二次验证日志表' AS table5;
+SELECT '6. file_metadata - 文件元数据表' AS table6;
+SELECT '7. upload_tasks - 上传任务表' AS table7;
+SELECT '8. directory_nodes - 目录节点表' AS table8;
+SELECT '9. file_chunks - 文件分片表' AS table9;
+SELECT '10. directory_permissions - 目录权限表' AS table10;
+SELECT '已插入4个测试用户及其头像元数据' AS data_info;
