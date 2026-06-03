@@ -1,5 +1,7 @@
 package com.mizuka.cloudfilesystem.dto;
 
+import java.time.LocalDateTime;
+
 /**
  * 二次验证响应DTO
  */
@@ -11,7 +13,10 @@ public class TwoFactorVerifyResponse {
     private String token;          // JWT令牌
     private Long userId;
     private String userType;
-    private String homeDirectory;
+    private String homeDirectory;  // 已废弃，保留以兼容旧版本
+    private Long homeDirectoryId;  // 用户根节点ID
+    private Long recycleBinId;     // 用户回收站ID
+    private LocalDateTime expiresAt; // Token过期时间
 
     public TwoFactorVerifyResponse() {
     }
@@ -25,6 +30,7 @@ public class TwoFactorVerifyResponse {
         this.userId = userId;
         this.userType = userType;
         this.homeDirectory = homeDirectory;
+        this.homeDirectoryId = null;
     }
 
     // Getters and Setters
@@ -82,6 +88,30 @@ public class TwoFactorVerifyResponse {
 
     public void setHomeDirectory(String homeDirectory) {
         this.homeDirectory = homeDirectory;
+    }
+
+    public Long getHomeDirectoryId() {
+        return homeDirectoryId;
+    }
+
+    public void setHomeDirectoryId(Long homeDirectoryId) {
+        this.homeDirectoryId = homeDirectoryId;
+    }
+
+    public Long getRecycleBinId() {
+        return recycleBinId;
+    }
+
+    public void setRecycleBinId(Long recycleBinId) {
+        this.recycleBinId = recycleBinId;
+    }
+
+    public LocalDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(LocalDateTime expiresAt) {
+        this.expiresAt = expiresAt;
     }
 
     @Override

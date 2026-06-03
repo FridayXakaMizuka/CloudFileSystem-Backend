@@ -32,8 +32,14 @@ public class LoginResponse {
     // 头像（登录成功时返回）
     private String avatar;
 
-    // 主目录（登录成功时返回）
+    // 主目录路径（登录成功时返回，已废弃，保留以兼容旧版本）
     private String homeDirectory;
+
+    // 用户根节点ID（登录成功时返回）
+    private Long homeDirectoryId;
+
+    // 用户回收站ID（登录成功时返回）
+    private Long recycleBinId;
 
     // 注册时间（登录成功时返回）
     private LocalDateTime registeredAt;
@@ -145,6 +151,22 @@ public class LoginResponse {
 
     public void setHomeDirectory(String homeDirectory) {
         this.homeDirectory = homeDirectory;
+    }
+
+    public Long getHomeDirectoryId() {
+        return homeDirectoryId;
+    }
+
+    public void setHomeDirectoryId(Long homeDirectoryId) {
+        this.homeDirectoryId = homeDirectoryId;
+    }
+
+    public Long getRecycleBinId() {
+        return recycleBinId;
+    }
+
+    public void setRecycleBinId(Long recycleBinId) {
+        this.recycleBinId = recycleBinId;
     }
 
     public LocalDateTime getRegisteredAt() {

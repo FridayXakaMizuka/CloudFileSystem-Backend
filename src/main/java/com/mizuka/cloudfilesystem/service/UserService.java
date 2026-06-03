@@ -28,9 +28,11 @@ import com.mizuka.cloudfilesystem.dto.ResetPasswordRequest;
 import com.mizuka.cloudfilesystem.dto.ResetPasswordResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mizuka.cloudfilesystem.entity.Administrator;
+import com.mizuka.cloudfilesystem.entity.FolderNode;
 import com.mizuka.cloudfilesystem.entity.SecurityQuestion;
 import com.mizuka.cloudfilesystem.entity.User;
 import com.mizuka.cloudfilesystem.mapper.AdministratorMapper;
+import com.mizuka.cloudfilesystem.mapper.FolderNodeMapper;
 import com.mizuka.cloudfilesystem.mapper.SecurityQuestionMapper;
 import com.mizuka.cloudfilesystem.mapper.UserMapper;
 import com.mizuka.cloudfilesystem.util.JwtUtil;
@@ -65,6 +67,9 @@ public class UserService {
     
     @Autowired
     private SecurityQuestionMapper securityQuestionMapper;
+    
+    @Autowired
+    private FolderNodeMapper folderNodeMapper;
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -200,8 +205,21 @@ public class UserService {
             User user = new User();
             user.setNickname(data.getNickname());
             user.setPassword(bcryptPassword);
-            user.setEmail(data.getEmail());
-            user.setPhone(data.getPhone());
+            
+            // 修复：将空字符串转换为null，避免违反email字段的唯一约束
+            String email = data.getEmail();
+            if (email != null && email.trim().isEmpty()) {
+                email = null;
+            }
+            user.setEmail(email);
+            
+            // 修复：将空字符串转换为null，避免违反phone字段的唯一约束
+            String phone = data.getPhone();
+            if (phone != null && phone.trim().isEmpty()) {
+                phone = null;
+            }
+            user.setPhone(phone);
+            
             user.setStorageQuota(10737418240L);  // 默认10GB
             user.setStorageUsed(0L);
             user.setStatus(1);  // 正常状态
@@ -214,7 +232,16 @@ public class UserService {
             int result = userMapper.insertUser(user);
 
             if (result > 0) {
-                // 12. 注册成功后，删除 Redis 中的密钥对和验证码（一次性使用）
+                // 12. 为新用户初始化根目录（如果该用户没有根目录）
+                try {
+                    initializeUserRootDirectory(user.getId());
+                    logger.info("[用户注册] 已为用户初始化根目录 - UserId: {}", user.getId());
+                } catch (Exception e) {
+                    logger.error("[用户注册] 初始化根目录失败 - UserId: {}, Error: {}", user.getId(), e.getMessage());
+                    // 不阻断注册流程，继续执行
+                }
+                
+                // 13. 注册成功后，删除 Redis 中的密钥对和验证码（一次性使用）
                 redisTemplate.delete(redisKey);
 
                 // 13. 构建响应数据
@@ -242,6 +269,68 @@ public class UserService {
             return new RegisterResponse(500, false, "注册失败：" + e.getMessage(), null);
         }
     }
+    
+    /**
+     * 为新用户初始化根目录
+     * 优先从待分配目录池中寻找，若待分配目录池为空则新建一个目录
+     * 
+     * @param userId 用户ID
+     */
+    private void initializeUserRootDirectory(Long userId) {
+        // 1. 检查用户是否已有根目录
+        Long existingRootId = folderNodeMapper.findUserRootId(userId);
+        if (existingRootId != null) {
+            logger.info("[初始化根目录] 用户已有根目录，跳过初始化 - UserId: {}, RootId: {}", userId, existingRootId);
+            return;
+        }
+        
+        // 2. 获取_files目录的ID（作为用户根目录的父目录）
+        Long filesDirectoryId = folderNodeMapper.getFilesDirectoryId();
+        if (filesDirectoryId == null) {
+            throw new RuntimeException("系统目录 _root/_files 不存在，请联系管理员");
+        }
+        
+        // 3. 尝试从待分配池复用文件夹
+        FolderNode reusedFolder = folderNodeMapper.findAndClaimUnassignedFolder(userId);
+        
+        if (reusedFolder != null) {
+            // 复用了待分配文件夹，更新其信息
+            reusedFolder.setParentId(filesDirectoryId);
+            reusedFolder.setName(String.valueOf(userId));
+            reusedFolder.setUserId(userId);
+            reusedFolder.setUpdatedAt(LocalDateTime.now());
+            
+            // 更新路径
+            String newPath = "_root/_files/" + userId;
+            reusedFolder.setPath(newPath);
+            
+            folderNodeMapper.updateFolderInfo(reusedFolder);
+            
+            logger.info("[初始化根目录] 复用待分配文件夹 - UserId: {}, FolderId: {}", userId, reusedFolder.getId());
+        } else {
+            // 4. 如果没有可复用的文件夹，则创建新的
+            FolderNode newFolder = new FolderNode();
+            newFolder.setParentId(filesDirectoryId);
+            newFolder.setUserId(userId);
+            newFolder.setName(String.valueOf(userId));
+            newFolder.setLevel(2);  // _root(0) -> _files(1) -> userId(2)
+            newFolder.setIsHidden(false);
+            newFolder.setIsDeleted(false);
+            newFolder.setDirectoryStatus("active");
+            newFolder.setCreatedAt(LocalDateTime.now());
+            newFolder.setUpdatedAt(LocalDateTime.now());
+            
+            // 构建路径
+            String newPath = "_root/_files/" + userId;
+            newFolder.setPath(newPath);
+            
+            // 插入数据库
+            folderNodeMapper.insertFolder(newFolder);
+            
+            logger.info("[初始化根目录] 创建新文件夹 - UserId: {}, FolderId: {}", userId, newFolder.getId());
+        }
+    }
+    
     /**
      * 用户登录
      * @param loginRequest 登录请求对象
@@ -396,6 +485,132 @@ public class UserService {
                     (tokenExpiration != null && tokenExpiration > 0) ? tokenExpiration : 604800
             );
 
+            // 查询用户根目录ID和回收站ID（仅对普通用户）
+            Long homeDirectoryId = null;
+            Long recycleBinId = null;
+            if ("user".equals(userType)) {
+                homeDirectoryId = folderNodeMapper.findUserRootId(userIdNum);
+                recycleBinId = folderNodeMapper.findRecycleBinId(userIdNum);
+                
+                if (homeDirectoryId != null) {
+                    logger.info("[用户登录] 查询到用户根目录ID - UserId: {}, HomeDirectoryId: {}", userIdNum, homeDirectoryId);
+                } else {
+                    logger.warn("[用户登录] 未找到用户根目录 - UserId: {}", userIdNum);
+                }
+                
+                if (recycleBinId != null) {
+                    logger.info("[用户登录] 查询到用户回收站ID - UserId: {}, RecycleBinId: {}", userIdNum, recycleBinId);
+                } else {
+                    logger.warn("[用户登录] 未找到用户回收站 - UserId: {}", userIdNum);
+                }
+                
+                // 将homeDirectoryId和recycleBinId写入Redis缓存（profile:{userId}）
+                try {
+                    String profileCacheKey = "profile:" + userIdNum;
+                    String cachedProfile = profileRedisTemplate.opsForValue().get(profileCacheKey);
+                    
+                    if (cachedProfile != null) {
+                        // 如果缓存存在，更新homeDirectoryId和recycleBinId字段
+                        ObjectMapper mapper = new ObjectMapper();
+                        UserProfileResponse.UserData userData = mapper.readValue(cachedProfile, UserProfileResponse.UserData.class);
+                        
+                        // UserData中没有homeDirectoryId和recycleBinId字段，我们需要在JSON中添加
+                        com.fasterxml.jackson.databind.node.ObjectNode jsonNode = mapper.valueToTree(userData);
+                        if (homeDirectoryId != null) {
+                            jsonNode.put("homeDirectoryId", homeDirectoryId);
+                        }
+                        if (recycleBinId != null) {
+                            jsonNode.put("recycleBinId", recycleBinId);
+                        }
+                        
+                        // 获取剩余TTL
+                        Long remainingTtl = profileRedisTemplate.getExpire(profileCacheKey, TimeUnit.SECONDS);
+                        if (remainingTtl != null && remainingTtl > 0) {
+                            String updatedJson = mapper.writeValueAsString(jsonNode);
+                            profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, remainingTtl, TimeUnit.SECONDS);
+                            logger.info("[用户登录] Redis缓存已更新目录ID - UserId: {}, 剩余TTL: {}秒", userIdNum, remainingTtl);
+                        } else {
+                            String updatedJson = mapper.writeValueAsString(jsonNode);
+                            profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, 7, TimeUnit.DAYS);
+                            logger.info("[用户登录] Redis缓存已更新目录ID（默认7天） - UserId: {}", userIdNum);
+                        }
+                    } else {
+                        // 如果缓存不存在，创建新的缓存数据
+                        // 先查询用户的头像和其他信息
+                        String avatar = "";
+                        String securityQuestion = "";
+                        Long storageUsed = 0L;
+                        Long storageQuota = 0L;
+                        
+                        if ("user".equals(userType)) {
+                            // 普通用户，从User表查询
+                            User user = userMapper.findById(userIdNum);
+                            if (user != null) {
+                                // 处理头像：null 或空字符串都转为空字符串
+                                String dbAvatar = user.getAvatar();
+                                avatar = (dbAvatar != null && !dbAvatar.isEmpty()) ? dbAvatar : "";
+                                storageUsed = user.getStorageUsed() != null ? user.getStorageUsed() : 0L;
+                                storageQuota = user.getStorageQuota() != null ? user.getStorageQuota() : 0L;
+                                
+                                // 获取安全问题
+                                Integer questionId = user.getSecurityQuestionId();
+                                if (questionId != null) {
+                                    securityQuestion = getSecurityQuestionContent(questionId);
+                                    if (securityQuestion == null) {
+                                        securityQuestion = "";
+                                    }
+                                }
+                                
+                                logger.info("[用户登录] 创建缓存 - UserId: {}, Avatar: '{}', StorageUsed: {}, StorageQuota: {}",
+                                    userIdNum, avatar, storageUsed, storageQuota);
+                            }
+                        } else {
+                            // 管理员，从Administrator表查询
+                            Administrator admin = administratorMapper.findById((int) userIdNum);
+                            if (admin != null) {
+                                // 处理头像：null 或空字符串都转为空字符串
+                                String dbAvatar = admin.getAvatar();
+                                avatar = (dbAvatar != null && !dbAvatar.isEmpty()) ? dbAvatar : "";
+                                logger.info("[用户登录] 创建缓存 - UserId: {}, Avatar: '{}'", userIdNum, avatar);
+                            }
+                        }
+                        
+                        UserProfileResponse.UserData userData = new UserProfileResponse.UserData(
+                            avatar,
+                            email != null ? email : "",
+                            nickname != null ? nickname : "",
+                            phone != null ? phone : "",
+                            securityQuestion,
+                            storageQuota,
+                            storageUsed
+                        );
+                        
+                        ObjectMapper mapper = new ObjectMapper();
+                        com.fasterxml.jackson.databind.node.ObjectNode jsonNode = mapper.valueToTree(userData);
+                        if (homeDirectoryId != null) {
+                            jsonNode.put("homeDirectoryId", homeDirectoryId);
+                        }
+                        if (recycleBinId != null) {
+                            jsonNode.put("recycleBinId", recycleBinId);
+                        }
+                        
+                        // 获取JWT令牌剩余有效期
+                        long expirationSeconds = getRemainingTokenExpiration(token);
+                        if (expirationSeconds > 0) {
+                            String jsonProfile = mapper.writeValueAsString(jsonNode);
+                            profileRedisTemplate.opsForValue().set(profileCacheKey, jsonProfile, expirationSeconds, TimeUnit.SECONDS);
+                            logger.info("[用户登录] Redis缓存已设置（含目录ID） - UserId: {}, 过期时间: {}秒", userIdNum, expirationSeconds);
+                        } else {
+                            String jsonProfile = mapper.writeValueAsString(jsonNode);
+                            profileRedisTemplate.opsForValue().set(profileCacheKey, jsonProfile, 7, TimeUnit.DAYS);
+                            logger.info("[用户登录] Redis缓存已设置（含目录ID，默认7天） - UserId: {}", userIdNum);
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.warn("[用户登录] Redis缓存设置目录ID失败 - {}", e.getMessage());
+                }
+            }
+
             LoginResponse response = new LoginResponse();
             response.setCode(200);
             response.setSuccess(true);
@@ -407,6 +622,8 @@ public class UserService {
             response.setPhone(phone);
             response.setUserType(userType);
             response.setHomeDirectory("user".equals(userType) ? "/users/" + userIdNum : "/admin/");
+            response.setHomeDirectoryId(homeDirectoryId);  // 新增：返回用户根节点ID
+            response.setRecycleBinId(recycleBinId);  // 新增：返回用户回收站ID
             response.setExpiresAt(expiresAt);
 
             logger.info("[用户登录] 成功 - UserId: {}, UserType: {}, LoginMethod: {}", 
@@ -526,6 +743,12 @@ public class UserService {
                 ObjectMapper mapper = new ObjectMapper();
                 UserProfileResponse.UserData userData = mapper.readValue(cachedProfile, UserProfileResponse.UserData.class);
                 
+                // 确保头像字段正确处理：null 或空字符串都转为空字符串（符合前端约定）
+                if (userData.getAvatar() == null) {
+                    userData.setAvatar("");
+                    logger.debug("[获取个人资料] 缓存中 avatar 为 null，已设置为空字符串 - UserId: {}", userId);
+                }
+                
                 // 确保 securityQuestion 不为 null
                 if (userData.getSecurityQuestion() == null) {
                     userData.setSecurityQuestion("");
@@ -557,7 +780,10 @@ public class UserService {
                 Administrator admin = administratorMapper.findById(userId.intValue());
                 if (admin != null) {
                     // 处理头像：null 或空字符串都转为 null
-                    avatar = (admin.getAvatar() != null && !admin.getAvatar().isEmpty()) ? admin.getAvatar() : null;
+                    String dbAvatar = admin.getAvatar();
+                    avatar = (dbAvatar != null && !dbAvatar.isEmpty()) ? dbAvatar : null;
+                    logger.info("[获取个人资料] 管理员头像 - UserId: {}, DB值: '{}', 处理后: '{}'", 
+                        userId, dbAvatar, avatar);
                     nickname = admin.getNickname();
                     email = admin.getEmail();
                     phone = admin.getPhone();
@@ -570,7 +796,10 @@ public class UserService {
                 User user = userMapper.findById(userId);
                 if (user != null) {
                     // 处理头像：null 或空字符串都转为 null
-                    avatar = (user.getAvatar() != null && !user.getAvatar().isEmpty()) ? user.getAvatar() : null;
+                    String dbAvatar = user.getAvatar();
+                    avatar = (dbAvatar != null && !dbAvatar.isEmpty()) ? dbAvatar : null;
+                    logger.info("[获取个人资料] 普通用户头像 - UserId: {}, DB值: '{}', 处理后: '{}'", 
+                        userId, dbAvatar, avatar);
                     nickname = user.getNickname();
                     email = user.getEmail();
                     phone = user.getPhone();
@@ -602,8 +831,12 @@ public class UserService {
 
             // 6. 构建未脱敏的数据对象（用于缓存）
             // 注意：avatar 为 null 时转为空字符串，保持与前端约定一致
+            String avatarForCache = avatar != null ? avatar : "";
+            logger.info("[获取个人资料] 构建缓存数据 - UserId: {}, Avatar原始值: '{}', Avatar缓存值: '{}'", 
+                userId, avatar, avatarForCache);
+            
             UserProfileResponse.UserData rawData = new UserProfileResponse.UserData(
-                avatar != null ? avatar : "",
+                avatarForCache,
                 email != null ? email : "",
                 nickname,
                 phone != null ? phone : "",
@@ -611,24 +844,53 @@ public class UserService {
                 storageQuota,
                 storageUsed
             );
+            
+            // 6.5 查询用户的 homeDirectoryId 和 recycleBinId
+            Long homeDirectoryId = null;
+            Long recycleBinId = null;
+            
+            if (userId >= 10001) {
+                // 普通用户才需要查询目录ID
+                homeDirectoryId = folderNodeMapper.findUserRootId(userId);
+                recycleBinId = folderNodeMapper.findRecycleBinId(userId);
+                
+                logger.info("[获取个人资料] 查询目录ID - UserId: {}, HomeDirectoryId: {}, RecycleBinId: {}", 
+                    userId, homeDirectoryId, recycleBinId);
+            }
+            
+            // 设置到 UserData 中
+            rawData.setHomeDirectoryId(homeDirectoryId);
+            rawData.setRecycleBinId(recycleBinId);
 
             // 7. 将未脱敏的数据存入Redis缓存（JSON格式，过期时间与JWT令牌一致）
             try {
                 ObjectMapper mapper = new ObjectMapper();
                 String jsonProfile = mapper.writeValueAsString(rawData);
                 
+                // 记录缓存内容的摘要信息
+                logger.info("[获取个人资料] 准备写入缓存 - UserId: {}, JSON长度: {}", userId, jsonProfile.length());
+                
                 // 获取JWT令牌剩余有效期
                 long expirationSeconds = getRemainingTokenExpiration(token);
                 if (expirationSeconds > 0) {
                     profileRedisTemplate.opsForValue().set(cacheKey, jsonProfile, expirationSeconds, TimeUnit.SECONDS);
-                    logger.info("[获取个人资料] 缓存已设置 - UserId: {}, 过期时间: {}秒", userId, expirationSeconds);
+                    logger.info("[获取个人资料] 缓存已设置 - UserId: {}, 过期时间: {}秒, CacheKey: {}", userId, expirationSeconds, cacheKey);
                 } else {
                     // 如果无法获取剩余时间，使用默认7天
                     profileRedisTemplate.opsForValue().set(cacheKey, jsonProfile, 7, TimeUnit.DAYS);
-                    logger.info("[获取个人资料] 缓存已设置（默认7天） - UserId: {}", userId);
+                    logger.info("[获取个人资料] 缓存已设置（默认7天） - UserId: {}, CacheKey: {}", userId, cacheKey);
+                }
+                
+                // 验证缓存是否成功写入
+                String verifyCache = profileRedisTemplate.opsForValue().get(cacheKey);
+                if (verifyCache != null) {
+                    logger.info("[获取个人资料] 缓存验证成功 - UserId: {}, 缓存内容前100字符: {}", 
+                        userId, verifyCache.length() > 100 ? verifyCache.substring(0, 100) : verifyCache);
+                } else {
+                    logger.warn("[获取个人资料] 缓存验证失败 - UserId: {}, 缓存为空！", userId);
                 }
             } catch (Exception e) {
-                logger.warn("[获取个人资料] 缓存设置失败 - {}", e.getMessage());
+                logger.error("[获取个人资料] 缓存设置失败 - UserId: {}, 错误: {}", userId, e.getMessage(), e);
             }
 
             // 8. 脱敏处理（返回给前端）

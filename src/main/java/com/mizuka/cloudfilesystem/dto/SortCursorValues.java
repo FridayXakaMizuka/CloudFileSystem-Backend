@@ -28,4 +28,9 @@ public class SortCursorValues {
      * 名称
      */
     private String name;
+    
+    /**
+     * 文件大小（仅文件有效）
+     */
+    private Long size;
 }

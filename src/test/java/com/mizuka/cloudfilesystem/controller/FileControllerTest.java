@@ -281,4 +281,34 @@ class FileControllerTest {
                 .andExpect(jsonPath("$.data.reusedFromPool").exists())
                 .andExpect(jsonPath("$.data.reusedFromPool").isBoolean());
     }
+
+    @Test
+    @DisplayName("创建文件夹 - 同名文件夹应该返回409错误")
+    void testCreateFolderDuplicateName() throws Exception {
+        Long testParentId = 1L;  // 根据实际情况修改
+        String folderName = "duplicate_test_folder";
+        
+        // 第一次创建 - 应该成功
+        NewFolderRequest request1 = new NewFolderRequest();
+        request1.setParentId(testParentId);
+        request1.setFolderName(folderName);
+        
+        mockMvc.perform(post("/files/folder")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request1)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+        
+        // 第二次创建同名文件夹 - 应该失败，返回409
+        NewFolderRequest request2 = new NewFolderRequest();
+        request2.setParentId(testParentId);
+        request2.setFolderName(folderName);
+        
+        mockMvc.perform(post("/files/folder")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value(40901));
+    }
 }

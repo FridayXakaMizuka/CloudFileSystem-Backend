@@ -94,13 +94,36 @@ public class JwtUtil {
 
     public Claims parseToken(String token) {
         try {
+            // 验证token格式
+            if (token == null || token.trim().isEmpty()) {
+                logger.error("[JWT解析] 失败 - Token为空");
+                throw new IllegalArgumentException("JWT令牌不能为空");
+            }
+            
+            // 检查是否包含句点字符(JWT格式要求)
+            int dotCount = 0;
+            for (char c : token.toCharArray()) {
+                if (c == '.') dotCount++;
+            }
+            if (dotCount != 2) {
+                logger.error("[JWT解析] 失败 - Token格式错误,期望2个句点,实际找到{}个,Token预览:{}", 
+                    dotCount, 
+                    token.length() > 50 ? token.substring(0, 50) + "..." : token);
+                throw new IllegalArgumentException("无效的JWT令牌格式");
+            }
+            
             return Jwts.parser()
                     .verifyWith(getSigningKey())
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
+        } catch (IllegalArgumentException e) {
+            // 重新抛出已处理的异常
+            throw e;
         } catch (Exception e) {
-            logger.error("[JWT解析] 失败 - {}", e.getMessage());
+            logger.error("[JWT解析] 失败 - {}, Token预览:{}", 
+                e.getMessage(),
+                token != null && token.length() > 50 ? token.substring(0, 50) + "..." : token);
             throw new IllegalArgumentException("无效的JWT令牌");
         }
     }
@@ -209,6 +232,31 @@ public class JwtUtil {
         } catch (Exception e) {
             logger.error("[resetToken验证] 失败 - {}", e.getMessage());
             throw new IllegalArgumentException("验证令牌无效");
+        }
+    }
+
+    /**
+     * 获取JWT令牌的剩余有效期（秒）
+     * @param token JWT令牌
+     * @return 剩余秒数，如果令牌无效或已过期则返回0
+     */
+    public long getRemainingExpiration(String token) {
+        try {
+            Claims claims = parseToken(token);
+            Date expiration = claims.getExpiration();
+            if (expiration == null) {
+                return 0;
+            }
+            
+            long remainingMillis = expiration.getTime() - System.currentTimeMillis();
+            if (remainingMillis <= 0) {
+                return 0;
+            }
+            
+            return remainingMillis / 1000;
+        } catch (Exception e) {
+            logger.warn("[JWT解析] 获取剩余有效期失败 - {}", e.getMessage());
+            return 0;
         }
     }
 }

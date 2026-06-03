@@ -46,7 +46,7 @@ public class DirectoryService {
      * @param lastChildrenType 游标锚点类型
      * @param maxPageSize 期望的最大返回数量
      * @param userId 用户ID
-     * @param sortedBy 排序字段：0=createdAt(默认), 1=name, 2=editedAt
+     * @param sortedBy 排序字段：0=name, 1=size（只对文件起效，文件夹与0等效）, 2=createdAt, 3=updatedAt
      * @param order 排序顺序：0=asc, 1=desc
      * @param excludeNewFileIds 需要排除的新增文件ID列表
      * @param excludeNewFolderIds 需要排除的新增文件夹ID列表
@@ -133,7 +133,17 @@ public class DirectoryService {
         
         // 8. 构建响应
         CursorPagination pagination = buildPagination(resultChildren, isEnd);
-        DirectoryNodeVO currentNodeVO = convertFolderToVO(currentNode);
+        
+        // 优化：批量查询当前节点的子节点数量
+        Map<Long, Integer> childCountMap = new HashMap<>();
+        List<Map<String, Object>> countResults = folderNodeMapper.batchCountChildren(
+            Collections.singletonList(currentNodeId), userId
+        );
+        if (!countResults.isEmpty()) {
+            Long childCount = ((Number) countResults.get(0).get("child_count")).longValue();
+            childCountMap.put(currentNodeId, childCount.intValue());
+        }
+        DirectoryNodeVO currentNodeVO = convertFolderToVO(currentNode, childCountMap);
         
         DirectoryBrowseResponse response = new DirectoryBrowseResponse();
         response.setCurrentNode(currentNodeVO);
@@ -178,12 +188,19 @@ public class DirectoryService {
                         sortedBy, orderStr);
             }
             
-            List<DirectoryNodeVO> folderVOs = convertFoldersToVO(childFolders);
+            log.debug("[查询文件夹] 原始数量: {}, 排除列表: {}", 
+                childFolders.size(), 
+                excludeNewFolderIds != null ? excludeNewFolderIds : "null");
+            
+            List<DirectoryNodeVO> folderVOs = convertFoldersToVO(childFolders, userId);
             
             if (excludeNewFolderIds != null && !excludeNewFolderIds.isEmpty()) {
+                int beforeSize = folderVOs.size();
                 folderVOs = folderVOs.stream()
                     .filter(vo -> !excludeNewFolderIds.contains(vo.getId()))
                     .toList();
+                log.debug("[查询文件夹] 过滤后数量: {} -> {}, 被排除的ID: {}", 
+                    beforeSize, folderVOs.size(), excludeNewFolderIds);
             }
             
             resultChildren.addAll(folderVOs);
@@ -196,6 +213,7 @@ public class DirectoryService {
             LocalDateTime fileLastCreatedAt = null;
             LocalDateTime fileLastUpdatedAt = null;
             String fileLastName = null;
+            Long fileLastSize = null;
             
             if (lastChildrenNode == null || lastChildrenType == null) {
                 fileLastId = null;
@@ -204,6 +222,9 @@ public class DirectoryService {
                 fileLastCreatedAt = lastCreatedAt;
                 fileLastUpdatedAt = lastUpdatedAt;
                 fileLastName = lastName;
+                // Get size from cursor values
+                SortCursorValues cursorValues = getSortCursorValues(lastChildrenNode, lastChildrenType);
+                fileLastSize = cursorValues.getSize();
             }
             
             List<FileNode> childFiles;
@@ -211,22 +232,29 @@ public class DirectoryService {
                 childFiles = fileNodeMapper.findRecycleBinChildrenWithSortCursor(
                         currentNodeId, userId,
                         fileLastCreatedAt, fileLastUpdatedAt, fileLastName,
-                        fileLastId, remainingSlots,
+                        fileLastSize, fileLastId, remainingSlots,
                         sortedBy, orderStr);
             } else {
                 childFiles = fileNodeMapper.findChildrenWithSortCursor(
                         currentNodeId, userId,
                         fileLastCreatedAt, fileLastUpdatedAt, fileLastName,
-                        fileLastId, remainingSlots,
+                        fileLastSize, fileLastId, remainingSlots,
                         sortedBy, orderStr);
             }
+            
+            log.debug("[查询文件] 原始数量: {}, 排除列表: {}", 
+                childFiles.size(), 
+                excludeNewFileIds != null ? excludeNewFileIds : "null");
             
             List<DirectoryNodeVO> fileVOs = convertFilesToVO(childFiles);
             
             if (excludeNewFileIds != null && !excludeNewFileIds.isEmpty()) {
+                int beforeSize = fileVOs.size();
                 fileVOs = fileVOs.stream()
                     .filter(vo -> !excludeNewFileIds.contains(vo.getId()))
                     .toList();
+                log.debug("[查询文件] 过滤后数量: {} -> {}, 被排除的ID: {}", 
+                    beforeSize, fileVOs.size(), excludeNewFileIds);
             }
             
             resultChildren.addAll(fileVOs);
@@ -256,6 +284,7 @@ public class DirectoryService {
             LocalDateTime fileLastCreatedAt = null;
             LocalDateTime fileLastUpdatedAt = null;
             String fileLastName = null;
+            Long fileLastSize = null;
             
             if (lastChildrenNode == null || lastChildrenType == null) {
                 fileLastId = null;
@@ -264,6 +293,9 @@ public class DirectoryService {
                 fileLastCreatedAt = lastCreatedAt;
                 fileLastUpdatedAt = lastUpdatedAt;
                 fileLastName = lastName;
+                // Get size from cursor values
+                SortCursorValues cursorValues = getSortCursorValues(lastChildrenNode, lastChildrenType);
+                fileLastSize = cursorValues.getSize();
             }
             
             List<FileNode> childFiles;
@@ -271,13 +303,13 @@ public class DirectoryService {
                 childFiles = fileNodeMapper.findRecycleBinChildrenWithSortCursor(
                         currentNodeId, userId,
                         fileLastCreatedAt, fileLastUpdatedAt, fileLastName,
-                        fileLastId, fileLimit,
+                        fileLastSize, fileLastId, fileLimit,
                         sortedBy, orderStr);
             } else {
                 childFiles = fileNodeMapper.findChildrenWithSortCursor(
                         currentNodeId, userId,
                         fileLastCreatedAt, fileLastUpdatedAt, fileLastName,
-                        fileLastId, fileLimit,
+                        fileLastSize, fileLastId, fileLimit,
                         sortedBy, orderStr);
             }
             
@@ -324,7 +356,7 @@ public class DirectoryService {
                         sortedBy, orderStr);
             }
             
-            List<DirectoryNodeVO> folderVOs = convertFoldersToVO(childFolders);
+            List<DirectoryNodeVO> folderVOs = convertFoldersToVO(childFolders, userId);
             
             if (excludeNewFolderIds != null && !excludeNewFolderIds.isEmpty()) {
                 folderVOs = folderVOs.stream()
@@ -367,7 +399,13 @@ public class DirectoryService {
             throw new RuntimeException("无权在该目录下创建文件夹");
         }
         
-        // 3. 尝试从待分配池复用文件夹
+        // 3. 检查当前目录下是否存在同名文件夹
+        FolderNode existingFolder = folderNodeMapper.findByNameAndParent(parentId, folderName.trim(), userId);
+        if (existingFolder != null) {
+            throw new RuntimeException("当前目录下已存在同名文件夹: " + folderName.trim());
+        }
+        
+        // 4. 尝试从待分配池复用文件夹
         FolderNode reusedFolder = folderNodeMapper.findAndClaimUnassignedFolder(userId);
         
         if (reusedFolder != null) {
@@ -394,7 +432,7 @@ public class DirectoryService {
             );
         }
         
-        // 4. 如果没有可复用的文件夹，则创建新的
+        // 5. 如果没有可复用的文件夹，则创建新的
         FolderNode newFolder = new FolderNode();
         newFolder.setParentId(parentId);
         newFolder.setUserId(userId);
@@ -619,15 +657,42 @@ public class DirectoryService {
     
     /**
      * 转换文件夹列表为VO
+     * 优化版：批量查询子节点数量，避免 N+1 问题
      */
-    private List<DirectoryNodeVO> convertFoldersToVO(List<FolderNode> folders) {
-        return folders.stream().map(this::convertFolderToVO).collect(Collectors.toList());
+    private List<DirectoryNodeVO> convertFoldersToVO(List<FolderNode> folders, Long userId) {
+        if (folders == null || folders.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        // 1. 收集所有文件夹 ID
+        List<Long> folderIds = folders.stream()
+            .map(FolderNode::getId)
+            .toList();
+        
+        // 2. 批量查询子节点数量
+        List<Map<String, Object>> countResults = folderNodeMapper.batchCountChildren(folderIds, userId);
+        
+        // 3. 构建 Map<folderId, childCount>
+        Map<Long, Integer> childCountMap = new HashMap<>();
+        for (Map<String, Object> result : countResults) {
+            Long folderId = ((Number) result.get("folder_id")).longValue();
+            Long childCount = ((Number) result.get("child_count")).longValue();
+            childCountMap.put(folderId, childCount.intValue());
+        }
+        
+        log.debug("[批量统计] 文件夹数量: {}, 查询结果数: {}", folderIds.size(), countResults.size());
+        
+        // 4. 转换为 VO
+        return folders.stream()
+            .map(folder -> convertFolderToVO(folder, childCountMap))
+            .collect(Collectors.toList());
     }
     
     /**
      * 转换单个文件夹为VO
+     * 优化版：从缓存的 childCountMap 中获取子节点数量，避免 N+1 查询
      */
-    private DirectoryNodeVO convertFolderToVO(FolderNode folder) {
+    private DirectoryNodeVO convertFolderToVO(FolderNode folder, Map<Long, Integer> childCountMap) {
         DirectoryNodeVO vo = new DirectoryNodeVO();
         vo.setId(folder.getId());
         vo.setName(folder.getName());
@@ -637,9 +702,9 @@ public class DirectoryService {
         vo.setCreatedAt(folder.getCreatedAt());
         vo.setUpdatedAt(folder.getUpdatedAt());
         
-        long childCount = folderNodeMapper.countChildren(folder.getId(), folder.getUserId())
-                        + fileNodeMapper.countChildren(folder.getId(), folder.getUserId());
-        vo.setChildCount((int) childCount);
+        // 从缓存的 Map 中获取子节点数量
+        int childCount = childCountMap.getOrDefault(folder.getId(), 0);
+        vo.setChildCount(childCount);
         vo.setHasChildren(childCount > 0);
         
         // 回收站特有字段
@@ -700,7 +765,7 @@ public class DirectoryService {
      */
     private SortCursorValues getSortCursorValues(Long lastChildrenNode, String lastChildrenType) {
         if (lastChildrenNode == null || lastChildrenType == null) {
-            return new SortCursorValues(null, null, null);
+            return new SortCursorValues(null, null, null, null);
         }
 
         Map<String, Object> result;
@@ -714,10 +779,16 @@ public class DirectoryService {
             throw new RuntimeException("分页游标已失效，请刷新页面");
         }
 
+        Long size = null;
+        if (result.get("file_size") != null) {
+            size = ((Number) result.get("file_size")).longValue();
+        }
+
         return new SortCursorValues(
                 (LocalDateTime) result.get("created_at"),
                 (LocalDateTime) result.get("updated_at"),
-                (String) result.get("name")
+                (String) result.get("name"),
+                size
         );
     }
     

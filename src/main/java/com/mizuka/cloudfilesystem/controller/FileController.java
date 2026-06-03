@@ -28,7 +28,7 @@ public class FileController {
      * @param lastChildrenNode 游标锚点ID
      * @param lastChildrenType 游标锚点类型
      * @param maxPageSize 期望的最大返回数量
-     * @param sortedBy 排序字段：0=createdAt(默认), 1=name, 2=editedAt
+     * @param sortedBy 排序字段：0=name, 1=size（只对文件起效，文件夹与0等效）, 2=createdAt, 3=updatedAt
      * @param order 排序顺序：0=asc, 1=desc
      * @param excludeNewFileIds 需要排除的新增文件ID列表
      * @param excludeNewFolderIds 需要排除的新增文件夹ID列表
@@ -138,6 +138,9 @@ public class FileController {
             } else if (e.getMessage().contains("不存在")) {
                 log.warn("资源不存在: {}", e.getMessage());
                 return Result.error(40401, e.getMessage());
+            } else if (e.getMessage().contains("已存在同名文件夹")) {
+                log.warn("文件夹重名: {}", e.getMessage());
+                return Result.error(40901, e.getMessage());
             } else {
                 log.error("服务器错误: {}", e.getMessage(), e);
                 return Result.error(50001, "系统繁忙，请稍后重试");
@@ -471,7 +474,7 @@ public class FileController {
      * @param lastChildrenNode 游标锚点ID
      * @param lastChildrenType 游标锚点类型
      * @param maxPageSize 期望的最大返回数量
-     * @param sortedBy 排序字段：0=createdAt(默认), 1=name, 2=editedAt
+     * @param sortedBy 排序字段：0=name, 1=size（只对文件起效，文件夹与0等效）, 2=createdAt, 3=updatedAt
      * @param order 排序顺序：0=asc, 1=desc
      * @return 目录浏览响应
      */

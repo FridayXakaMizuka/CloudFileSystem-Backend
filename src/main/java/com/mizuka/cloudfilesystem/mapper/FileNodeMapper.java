@@ -57,7 +57,7 @@ public interface FileNodeMapper {
      * @param lastName 游标：上一页最后一条的名称
      * @param lastId 游标：上一页最后一条的ID
      * @param limit 查询数量
-     * @param sortedBy 排序字段：0=createdAt, 1=name, 2=updatedAt
+     * @param sortedBy 排序字段：0=name, 1=size, 2=createdAt, 3=updatedAt
      * @param order 排序顺序：asc/desc
      * @return 子文件列表
      */
@@ -67,29 +67,36 @@ public interface FileNodeMapper {
             "AND user_id = #{userId} " +
             "AND is_deleted = 0 " +
             "AND directory_status = 'active' " +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"asc\"'>" +
-            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"desc\"'>" +
-            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"asc\"'>" +
             "AND (name &gt; #{lastName} OR (name = #{lastName} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"desc\"'>" +
             "AND (name &lt; #{lastName} OR (name = #{lastName} AND id &lt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 1 and lastSize != null and order == \"asc\"'>" +
+            "AND (file_size &gt; #{lastSize} OR (file_size = #{lastSize} AND id &gt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 1 and lastSize != null and order == \"desc\"'>" +
+            "AND (file_size &lt; #{lastSize} OR (file_size = #{lastSize} AND id &lt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"asc\"'>" +
+            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"desc\"'>" +
+            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"asc\"'>" +
             "AND (updated_at &gt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"desc\"'>" +
             "AND (updated_at &lt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &lt; #{lastId})) " +
             "</if>" +
             "ORDER BY " +
             "<choose>" +
-            "  <when test='sortedBy == 1'>name</when>" +
-            "  <when test='sortedBy == 2'>updated_at</when>" +
-            "  <otherwise>created_at</otherwise>" +
+            "  <when test='sortedBy == 1'>file_size</when>" +
+            "  <when test='sortedBy == 2'>created_at</when>" +
+            "  <when test='sortedBy == 3'>updated_at</when>" +
+            "  <otherwise>name</otherwise>" +
             "</choose> " +
             "<choose>" +
             "  <when test='order == \"desc\"'>DESC</when>" +
@@ -107,6 +114,7 @@ public interface FileNodeMapper {
                                               @Param("lastCreatedAt") java.time.LocalDateTime lastCreatedAt,
                                               @Param("lastUpdatedAt") java.time.LocalDateTime lastUpdatedAt,
                                               @Param("lastName") String lastName,
+                                              @Param("lastSize") Long lastSize,
                                               @Param("lastId") Long lastId,
                                               @Param("limit") int limit,
                                               @Param("sortedBy") Integer sortedBy,
@@ -122,7 +130,7 @@ public interface FileNodeMapper {
      * @param lastName 游标：上一页最后一条的名称
      * @param lastId 游标：上一页最后一条的ID
      * @param limit 查询数量
-     * @param sortedBy 排序字段：0=createdAt, 1=name, 2=updatedAt
+     * @param sortedBy 排序字段：0=name, 1=size, 2=createdAt, 3=updatedAt
      * @param order 排序顺序：asc/desc
      * @return 子文件列表
      */
@@ -131,29 +139,36 @@ public interface FileNodeMapper {
             "WHERE folder_id = #{folderId} " +
             "AND user_id = #{userId} " +
             "AND directory_status = 'in_recycle_bin' " +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"asc\"'>" +
-            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"desc\"'>" +
-            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"asc\"'>" +
             "AND (name &gt; #{lastName} OR (name = #{lastName} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"desc\"'>" +
             "AND (name &lt; #{lastName} OR (name = #{lastName} AND id &lt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 1 and lastSize != null and order == \"asc\"'>" +
+            "AND (file_size &gt; #{lastSize} OR (file_size = #{lastSize} AND id &gt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 1 and lastSize != null and order == \"desc\"'>" +
+            "AND (file_size &lt; #{lastSize} OR (file_size = #{lastSize} AND id &lt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"asc\"'>" +
+            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"desc\"'>" +
+            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"asc\"'>" +
             "AND (updated_at &gt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"desc\"'>" +
             "AND (updated_at &lt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &lt; #{lastId})) " +
             "</if>" +
             "ORDER BY " +
             "<choose>" +
-            "  <when test='sortedBy == 1'>name</when>" +
-            "  <when test='sortedBy == 2'>updated_at</when>" +
-            "  <otherwise>created_at</otherwise>" +
+            "  <when test='sortedBy == 1'>file_size</when>" +
+            "  <when test='sortedBy == 2'>created_at</when>" +
+            "  <when test='sortedBy == 3'>updated_at</when>" +
+            "  <otherwise>name</otherwise>" +
             "</choose> " +
             "<choose>" +
             "  <when test='order == \"desc\"'>DESC</when>" +
@@ -171,6 +186,7 @@ public interface FileNodeMapper {
                                                         @Param("lastCreatedAt") java.time.LocalDateTime lastCreatedAt,
                                                         @Param("lastUpdatedAt") java.time.LocalDateTime lastUpdatedAt,
                                                         @Param("lastName") String lastName,
+                                                        @Param("lastSize") Long lastSize,
                                                         @Param("lastId") Long lastId,
                                                         @Param("limit") int limit,
                                                         @Param("sortedBy") Integer sortedBy,
@@ -182,7 +198,7 @@ public interface FileNodeMapper {
      * @param id 文件ID
      * @return 排序字段
      */
-    @Select("SELECT created_at, updated_at, name FROM file_nodes WHERE id = #{id}")
+    @Select("SELECT created_at, updated_at, name, file_size FROM file_nodes WHERE id = #{id}")
     Map<String, Object> findSortFieldsById(@Param("id") Long id);
     
     /**

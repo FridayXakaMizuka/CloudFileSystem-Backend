@@ -2,7 +2,7 @@
 
 > **版本**: v2.0  
 > **更新日期**: 2026-05-10  
-> **基础URL**: `/api/files`  
+> **基础URL**: `/files`  
 > **认证方式**: JWT Token（在请求头中携带 `Authorization: Bearer {token}`）
 
 ---
@@ -59,16 +59,16 @@
 
 ### 请求参数
 
-| 参数名 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|--------|------|
-| `currentNodeId` | Long | ✅ | - | 当前目录节点ID |
-| `lastChildrenNode` | Long | ❌ | null | 游标锚点：上一页最后一个子节点的ID |
-| `lastChildrenType` | String | ❌ | null | 游标锚点类型：`folder` 或 `file` |
-| `maxPageSize` | Integer | ❌ | 50 | 期望的最大返回数量（最大200） |
-| `sortedBy` | Integer | ❌ | 0 | 排序字段：0=createdAt, 1=name, 2=updatedAt |
-| `order` | Integer | ❌ | 1 | 排序顺序：0=asc（升序）, 1=desc（降序） |
-| `excludeNewFileIds` | Array<Long> | ❌ | null | 需要排除的新增文件ID列表 |
-| `excludeNewFolderIds` | Array<Long> | ❌ | null | 需要排除的新增文件夹ID列表 |
+| 参数名 | 类型 | 必填 | 默认值 | 说明                                                            |
+|--------|------|------|--------|---------------------------------------------------------------|
+| `currentNodeId` | Long | ✅ | - | 当前目录节点ID                                                      |
+| `lastChildrenNode` | Long | ❌ | null | 游标锚点：上一页最后一个子节点的ID                                            |
+| `lastChildrenType` | String | ❌ | null | 游标锚点类型：`folder` 或 `file`                                      |
+| `maxPageSize` | Integer | ❌ | 50 | 期望的最大返回数量（最大200）                                              |
+| `sortedBy` | Integer | ❌ | 0 | 排序字段：0=name, 1=size（只对文件起效，文件夹与0等效）, 2=createdAt, 3=updatedAt |
+| `order` | Integer | ❌ | 1 | 排序顺序：0=asc（升序）, 1=desc（降序）                                    |
+| `excludeNewFileIds` | Array<Long> | ❌ | null | 需要排除的新增文件ID列表                                                 |
+| `excludeNewFolderIds` | Array<Long> | ❌ | null | 需要排除的新增文件夹ID列表                                                |
 
 ### 排序策略
 
@@ -156,14 +156,14 @@ async function browseDirectory(currentNodeId, cursor = null) {
 
 ### 请求参数
 
-| 参数名 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|--------|------|
-| `currentNodeId` | Long | ✅ | - | 回收站根节点ID |
-| `lastChildrenNode` | Long | ❌ | null | 游标锚点 |
-| `lastChildrenType` | String | ❌ | null | 游标锚点类型 |
-| `maxPageSize` | Integer | ❌ | 50 | 每页数量 |
-| `sortedBy` | Integer | ❌ | 0 | 排序字段 |
-| `order` | Integer | ❌ | 1 | 排序顺序（默认降序） |
+| 参数名 | 类型 | 必填 | 默认值 | 说明                                                            |
+|--------|------|------|--------|---------------------------------------------------------------|
+| `currentNodeId` | Long | ✅ | - | 回收站根节点ID                                                      |
+| `lastChildrenNode` | Long | ❌ | null | 游标锚点                                                          |
+| `lastChildrenType` | String | ❌ | null | 游标锚点类型                                                        |
+| `maxPageSize` | Integer | ❌ | 50 | 每页数量                                                          |
+| `sortedBy` | Integer | ❌ | 0 | 排序字段：0=name, 1=size（只对文件起效，文件夹与0等效）, 2=createdAt, 3=updatedAt |
+| `order` | Integer | ❌ | 1 | 排序顺序（默认降序）                                                   |
 
 ### 响应示例
 

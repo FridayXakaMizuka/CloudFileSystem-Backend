@@ -31,7 +31,7 @@ public class DirectoryBrowseRequest {
     private Integer maxPageSize;
     
     /**
-     * 排序字段：0=createdAt(默认), 1=name, 2=editedAt
+     * 排序字段：0=name, 1=size（只对文件起效，文件夹与0等效）, 2=createdAt, 3=updatedAt
      */
     private Integer sortedBy;
     

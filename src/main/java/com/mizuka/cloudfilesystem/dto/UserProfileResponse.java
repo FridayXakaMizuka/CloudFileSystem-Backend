@@ -28,6 +28,8 @@ public class UserProfileResponse {
         private String securityQuestion; // 安全问题内容
         private Long storageQuota;       // 空间配额（字节）
         private Long storageUsed;        // 已使用空间（字节）
+        private Long homeDirectoryId;    // 用户根目录ID
+        private Long recycleBinId;       // 用户回收站ID
 
         public UserData() {
         }
@@ -97,6 +99,22 @@ public class UserProfileResponse {
 
         public void setStorageQuota(Long storageQuota) {
             this.storageQuota = storageQuota;
+        }
+
+        public Long getHomeDirectoryId() {
+            return homeDirectoryId;
+        }
+
+        public void setHomeDirectoryId(Long homeDirectoryId) {
+            this.homeDirectoryId = homeDirectoryId;
+        }
+
+        public Long getRecycleBinId() {
+            return recycleBinId;
+        }
+
+        public void setRecycleBinId(Long recycleBinId) {
+            this.recycleBinId = recycleBinId;
         }
     }
 

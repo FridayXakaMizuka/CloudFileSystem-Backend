@@ -34,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.KeyPair;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -88,6 +89,15 @@ public class AuthController {
     // 注入JWT工具类
     @Autowired
     private com.mizuka.cloudfilesystem.util.JwtUtil jwtUtil;
+    
+    // 注入个人资料RedisTemplate（端口6380）
+    @Autowired
+    @Qualifier("profileRedisTemplate")
+    private RedisTemplate<String, String> profileRedisTemplate;
+    
+    // 注入文件夹节点Mapper
+    @Autowired
+    private com.mizuka.cloudfilesystem.mapper.FolderNodeMapper folderNodeMapper;
 
     // 注入二次验证RedisTemplate
     //@Autowired
@@ -954,7 +964,16 @@ public class AuthController {
             // 11. 删除RSA密钥对（一次性使用）
             redisTemplate.delete(redisKey);
             
-            // 12. 返回成功响应
+            // 12. 查询并缓存目录ID
+            Long homeDirectoryId = queryAndCacheDirectoryIds(userId, token);
+            Long recycleBinId = folderNodeMapper.findRecycleBinId(userId);
+            
+            // 计算Token过期时间
+            LocalDateTime expiresAt = LocalDateTime.now().plusSeconds(
+                "browser".equalsIgnoreCase(clientType) ? 86400L : 2592000L
+            );
+            
+            // 13. 返回成功响应
             logger.info("[密保验证] 验证成功 - UserId: {}, ClientType: {}", userId, clientType);
             
             TwoFactorVerifyResponse response = new TwoFactorVerifyResponse();
@@ -965,6 +984,9 @@ public class AuthController {
             response.setUserId(userId);
             response.setUserType(userType);
             response.setHomeDirectory("user".equals(userType) ? "/users/" + userId : "/admin/");
+            response.setHomeDirectoryId(homeDirectoryId);  // 新增：返回用户根节点ID
+            response.setRecycleBinId(recycleBinId);  // 新增：返回用户回收站ID
+            response.setExpiresAt(expiresAt);  // 新增：返回Token过期时间
             
             return ResponseEntity.ok(response);
             
@@ -1101,7 +1123,16 @@ public class AuthController {
             // 8. 清除Redis中的会话数据
             twoFactorAuthService.clearSessionData(sessionId, clientType);
             
-            // 9. 返回成功响应
+            // 9. 查询并缓存目录ID
+            Long homeDirectoryId = queryAndCacheDirectoryIds(userId, token);
+            Long recycleBinId = folderNodeMapper.findRecycleBinId(userId);
+            
+            // 计算Token过期时间
+            LocalDateTime expiresAt = LocalDateTime.now().plusSeconds(
+                "browser".equalsIgnoreCase(clientType) ? 86400L : 2592000L
+            );
+            
+            // 10. 返回成功响应
             logger.info("[邮箱验证] 验证成功 - UserId: {}, ClientType: {}", userId, clientType);
             
             TwoFactorVerifyResponse response = new TwoFactorVerifyResponse();
@@ -1112,6 +1143,9 @@ public class AuthController {
             response.setUserId(userId);
             response.setUserType(userType);
             response.setHomeDirectory("user".equals(userType) ? "/users/" + userId : "/admin/");
+            response.setHomeDirectoryId(homeDirectoryId);  // 新增：返回用户根节点ID
+            response.setRecycleBinId(recycleBinId);  // 新增：返回用户回收站ID
+            response.setExpiresAt(expiresAt);  // 新增：返回Token过期时间
             
             return ResponseEntity.ok(response);
             
@@ -1231,7 +1265,16 @@ public class AuthController {
             // 8. 清除Redis中的会话数据
             twoFactorAuthService.clearSessionData(sessionId, clientType);
             
-            // 9. 返回成功响应
+            // 9. 查询并缓存目录ID
+            Long homeDirectoryId = queryAndCacheDirectoryIds(userId, token);
+            Long recycleBinId = folderNodeMapper.findRecycleBinId(userId);
+            
+            // 计算Token过期时间
+            LocalDateTime expiresAt = LocalDateTime.now().plusSeconds(
+                "browser".equalsIgnoreCase(clientType) ? 86400L : 2592000L
+            );
+            
+            // 10. 返回成功响应
             logger.info("[手机验证] 验证成功 - UserId: {}, ClientType: {}", userId, clientType);
             
             TwoFactorVerifyResponse response = new TwoFactorVerifyResponse();
@@ -1242,6 +1285,9 @@ public class AuthController {
             response.setUserId(userId);
             response.setUserType(userType);
             response.setHomeDirectory("user".equals(userType) ? "/users/" + userId : "/admin/");
+            response.setHomeDirectoryId(homeDirectoryId);  // 新增：返回用户根节点ID
+            response.setRecycleBinId(recycleBinId);  // 新增：返回用户回收站ID
+            response.setExpiresAt(expiresAt);  // 新增：返回Token过期时间
             
             return ResponseEntity.ok(response);
             
@@ -1253,6 +1299,100 @@ public class AuthController {
         }
     }
 
-
+    /**
+     * 查询用户根目录ID和回收站ID并缓存到Redis
+     * @param userId 用户ID
+     * @param token JWT令牌（用于获取过期时间）
+     * @return 用户根目录ID，如果不存在则返回null
+     */
+    private Long queryAndCacheDirectoryIds(Long userId, String token) {
+        try {
+            // 查询用户根目录ID和回收站ID
+            Long homeDirectoryId = folderNodeMapper.findUserRootId(userId);
+            Long recycleBinId = folderNodeMapper.findRecycleBinId(userId);
+            
+            if (homeDirectoryId != null) {
+                logger.info("[二次验证] 查询到用户根目录ID - UserId: {}, HomeDirectoryId: {}", userId, homeDirectoryId);
+            } else {
+                logger.warn("[二次验证] 未找到用户根目录 - UserId: {}", userId);
+            }
+            
+            if (recycleBinId != null) {
+                logger.info("[二次验证] 查询到用户回收站ID - UserId: {}, RecycleBinId: {}", userId, recycleBinId);
+            } else {
+                logger.warn("[二次验证] 未找到用户回收站 - UserId: {}", userId);
+            }
+            
+            // 将homeDirectoryId和recycleBinId写入Redis缓存（profile:{userId}）
+            String profileCacheKey = "profile:" + userId;
+            String cachedProfile = profileRedisTemplate.opsForValue().get(profileCacheKey);
+            
+            if (cachedProfile != null) {
+                // 如果缓存存在，更新homeDirectoryId和recycleBinId字段
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.mizuka.cloudfilesystem.dto.UserProfileResponse.UserData userData = 
+                    mapper.readValue(cachedProfile, com.mizuka.cloudfilesystem.dto.UserProfileResponse.UserData.class);
+                
+                // UserData中没有homeDirectoryId和recycleBinId字段，我们需要在JSON中添加
+                com.fasterxml.jackson.databind.node.ObjectNode jsonNode = mapper.valueToTree(userData);
+                if (homeDirectoryId != null) {
+                    jsonNode.put("homeDirectoryId", homeDirectoryId);
+                }
+                if (recycleBinId != null) {
+                    jsonNode.put("recycleBinId", recycleBinId);
+                }
+                
+                // 获取剩余TTL
+                Long remainingTtl = profileRedisTemplate.getExpire(profileCacheKey, TimeUnit.SECONDS);
+                if (remainingTtl != null && remainingTtl > 0) {
+                    String updatedJson = mapper.writeValueAsString(jsonNode);
+                    profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, remainingTtl, TimeUnit.SECONDS);
+                    logger.info("[二次验证] Redis缓存已更新目录ID - UserId: {}, 剩余TTL: {}秒", userId, remainingTtl);
+                } else {
+                    String updatedJson = mapper.writeValueAsString(jsonNode);
+                    profileRedisTemplate.opsForValue().set(profileCacheKey, updatedJson, 7, TimeUnit.DAYS);
+                    logger.info("[二次验证] Redis缓存已更新目录ID（默认7天） - UserId: {}", userId);
+                }
+            } else {
+                // 如果缓存不存在，创建新的缓存数据
+                com.mizuka.cloudfilesystem.dto.UserProfileResponse.UserData userData = 
+                    new com.mizuka.cloudfilesystem.dto.UserProfileResponse.UserData(
+                        "",  // avatar
+                        "",  // email
+                        "",  // nickname
+                        "",  // phone
+                        "",  // securityQuestion
+                        0L,  // storageQuota
+                        0L   // storageUsed
+                    );
+                
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.node.ObjectNode jsonNode = mapper.valueToTree(userData);
+                if (homeDirectoryId != null) {
+                    jsonNode.put("homeDirectoryId", homeDirectoryId);
+                }
+                if (recycleBinId != null) {
+                    jsonNode.put("recycleBinId", recycleBinId);
+                }
+                
+                // 获取JWT令牌剩余有效期
+                long expirationSeconds = jwtUtil.getRemainingExpiration(token);
+                if (expirationSeconds > 0) {
+                    String jsonProfile = mapper.writeValueAsString(jsonNode);
+                    profileRedisTemplate.opsForValue().set(profileCacheKey, jsonProfile, expirationSeconds, TimeUnit.SECONDS);
+                    logger.info("[二次验证] Redis缓存已设置（含目录ID） - UserId: {}, 过期时间: {}秒", userId, expirationSeconds);
+                } else {
+                    String jsonProfile = mapper.writeValueAsString(jsonNode);
+                    profileRedisTemplate.opsForValue().set(profileCacheKey, jsonProfile, 7, TimeUnit.DAYS);
+                    logger.info("[二次验证] Redis缓存已设置（含目录ID，默认7天） - UserId: {}", userId);
+                }
+            }
+            
+            return homeDirectoryId;
+        } catch (Exception e) {
+            logger.warn("[二次验证] Redis缓存设置目录ID失败 - {}", e.getMessage());
+            return null;
+        }
+    }
 
 }

@@ -40,6 +40,24 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         // 如果存在 Authorization 头且以 "Bearer " 开头
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
+            
+            // 检查token是否为无效值（null、undefined、空字符串等）
+            if (token == null || token.trim().isEmpty() || 
+                "null".equalsIgnoreCase(token) || 
+                "undefined".equalsIgnoreCase(token)) {
+                logger.warn("[JWT认证] 收到无效Token - Token值:'{}', URI: {}", token, request.getRequestURI());
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"code\":401,\"success\":false,\"message\":\"未提供有效的认证令牌，请重新登录\"}");
+                return;
+            }
+            
+            // 记录token基本信息用于调试
+            if (logger.isDebugEnabled()) {
+                logger.debug("[JWT认证] 收到Token - 长度:{}, 预览:{}", 
+                    token.length(),
+                    token.length() > 20 ? token.substring(0, 20) + "..." : token);
+            }
 
             try {
                 // 验证 JWT 令牌

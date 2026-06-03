@@ -28,29 +28,29 @@ public interface FolderNodeMapper {
             "AND user_id = #{userId} " +
             "AND is_deleted = 0 " +
             "AND directory_status = 'active' " +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"asc\"'>" +
-            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"desc\"'>" +
-            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"asc\"'>" +
             "AND (name &gt; #{lastName} OR (name = #{lastName} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"desc\"'>" +
             "AND (name &lt; #{lastName} OR (name = #{lastName} AND id &lt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"asc\"'>" +
+            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"desc\"'>" +
+            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"asc\"'>" +
             "AND (updated_at &gt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"desc\"'>" +
             "AND (updated_at &lt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &lt; #{lastId})) " +
             "</if>" +
             "ORDER BY " +
             "<choose>" +
-            "  <when test='sortedBy == 1'>name</when>" +
-            "  <when test='sortedBy == 2'>updated_at</when>" +
-            "  <otherwise>created_at</otherwise>" +
+            "  <when test='sortedBy == 2'>created_at</when>" +
+            "  <when test='sortedBy == 3'>updated_at</when>" +
+            "  <otherwise>name</otherwise>" +
             "</choose> " +
             "<choose>" +
             "  <when test='order == \"desc\"'>DESC</when>" +
@@ -74,6 +74,27 @@ public interface FolderNodeMapper {
                                                 @Param("order") String order);
     
     /**
+     * 批量统计多个文件夹的子节点数量
+     * 优化：一次性查询所有文件夹的子节点数，避免 N+1 问题
+     * 
+     * @param folderIds 文件夹ID列表
+     * @param userId 用户ID
+     * @return Map<folderId, childCount>
+     */
+    @Select("<script>" +
+            "SELECT fn.id AS folder_id, " +
+            "(SELECT COUNT(*) FROM folder_nodes WHERE parent_id = fn.id AND user_id = #{userId} AND is_deleted = 0 AND directory_status = 'active') + " +
+            "(SELECT COUNT(*) FROM file_nodes WHERE folder_id = fn.id AND user_id = #{userId} AND is_deleted = 0 AND directory_status = 'active') AS child_count " +
+            "FROM folder_nodes fn " +
+            "WHERE fn.id IN " +
+            "<foreach collection='folderIds' item='id' open='(' separator=',' close=')'>" +
+            "#{id}" +
+            "</foreach>" +
+            "</script>")
+    List<Map<String, Object>> batchCountChildren(@Param("folderIds") List<Long> folderIds,
+                                                  @Param("userId") Long userId);
+    
+    /**
      * 统一游标分页查询回收站中的子文件夹（支持多种排序）
      */
     @Select("<script>" +
@@ -81,29 +102,29 @@ public interface FolderNodeMapper {
             "WHERE parent_id = #{parentId} " +
             "AND user_id = #{userId} " +
             "AND directory_status = 'in_recycle_bin' " +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"asc\"'>" +
-            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 0 and lastCreatedAt != null and order == \"desc\"'>" +
-            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
-            "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"asc\"'>" +
             "AND (name &gt; #{lastName} OR (name = #{lastName} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 1 and lastName != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 0 and lastName != null and order == \"desc\"'>" +
             "AND (name &lt; #{lastName} OR (name = #{lastName} AND id &lt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"asc\"'>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"asc\"'>" +
+            "AND (created_at &gt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &gt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 2 and lastCreatedAt != null and order == \"desc\"'>" +
+            "AND (created_at &lt; #{lastCreatedAt} OR (created_at = #{lastCreatedAt} AND id &lt; #{lastId})) " +
+            "</if>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"asc\"'>" +
             "AND (updated_at &gt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &gt; #{lastId})) " +
             "</if>" +
-            "<if test='sortedBy == 2 and lastUpdatedAt != null and order == \"desc\"'>" +
+            "<if test='sortedBy == 3 and lastUpdatedAt != null and order == \"desc\"'>" +
             "AND (updated_at &lt; #{lastUpdatedAt} OR (updated_at = #{lastUpdatedAt} AND id &lt; #{lastId})) " +
             "</if>" +
             "ORDER BY " +
             "<choose>" +
-            "  <when test='sortedBy == 1'>name</when>" +
-            "  <when test='sortedBy == 2'>updated_at</when>" +
-            "  <otherwise>created_at</otherwise>" +
+            "  <when test='sortedBy == 2'>created_at</when>" +
+            "  <when test='sortedBy == 3'>updated_at</when>" +
+            "  <otherwise>name</otherwise>" +
             "</choose> " +
             "<choose>" +
             "  <when test='order == \"desc\"'>DESC</when>" +
@@ -148,9 +169,8 @@ public interface FolderNodeMapper {
      * @return 待分配的文件夹，如果没有则返回 null
      */
     @Select("SELECT * FROM folder_nodes " +
-            "WHERE user_id IS NULL " +
+            "WHERE directory_status = 'unassigned' " +
             "AND is_deleted = 0 " +
-            "AND directory_status = 'active' " +
             "ORDER BY id ASC " +
             "LIMIT 1 " +
             "FOR UPDATE")
@@ -299,6 +319,21 @@ public interface FolderNodeMapper {
     Long findUserRootId(@Param("userId") Long userId);
     
     /**
+     * 查询用户回收站ID
+     */
+    @Select("SELECT id FROM folder_nodes " +
+            "WHERE user_id = #{userId} " +
+            "AND parent_id = (SELECT id FROM folder_nodes WHERE path = '_root/_recycle_bin') " +
+            "LIMIT 1")
+    Long findRecycleBinId(@Param("userId") Long userId);
+    
+    /**
+     * 获取_files目录的ID（用于创建用户根目录的父目录）
+     */
+    @Select("SELECT id FROM folder_nodes WHERE path = '_root/_files' LIMIT 1")
+    Long getFilesDirectoryId();
+    
+    /**
      * 查询回收站中的子文件夹
      */
     @Select("SELECT * FROM folder_nodes " +
@@ -380,4 +415,23 @@ public interface FolderNodeMapper {
                                                        @Param("lastName") String lastName,
                                                        @Param("lastId") Long lastId,
                                                        @Param("limit") int limit);
+    
+    /**
+     * 检查指定父目录下是否存在同名文件夹
+     * 
+     * @param parentId 父目录ID
+     * @param folderName 文件夹名称
+     * @param userId 用户ID
+     * @return 如果存在返回文件夹对象，否则返回null
+     */
+    @Select("SELECT * FROM folder_nodes " +
+            "WHERE parent_id = #{parentId} " +
+            "AND name = #{folderName} " +
+            "AND user_id = #{userId} " +
+            "AND is_deleted = 0 " +
+            "AND directory_status = 'active' " +
+            "LIMIT 1")
+    FolderNode findByNameAndParent(@Param("parentId") Long parentId,
+                                    @Param("folderName") String folderName,
+                                    @Param("userId") Long userId);
 }
