@@ -74,6 +74,11 @@ public class DirectoryNodeVO {
      */
     private LocalDateTime updatedAt;
     
+    /**
+     * 乐观锁版本号，用于并发控制
+     */
+    private Long version;
+    
     // ========== 回收站特有字段 ==========
     
     /**

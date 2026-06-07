@@ -8,6 +8,7 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
@@ -119,6 +120,19 @@ public class RedisConfig {
         // 初始化模板
         template.afterPropertiesSet();
 
+        return template;
+    }
+    
+    /**
+     * StringRedisTemplate Bean（用于滑动窗口限流器等场景）
+     * 使用默认的 Redis 连接工厂（6379端口）
+     * StringRedisTemplate 是 RedisTemplate<String, String> 的便捷子类
+     */
+    @Bean
+    public StringRedisTemplate stringRedisTemplate() {
+        StringRedisTemplate template = new StringRedisTemplate();
+        template.setConnectionFactory(rsaRedisConnectionFactory());
+        template.afterPropertiesSet();
         return template;
     }
 }

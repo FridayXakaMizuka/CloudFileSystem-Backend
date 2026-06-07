@@ -256,10 +256,6 @@ public interface FileNodeMapper {
             "is_deleted = 1, " +
             "deleted_at = NOW(), " +
             "delete_expires_at = #{expiresAt}, " +
-            "path = #{recycleBinPath}, " +
-            "original_folder_id = folder_id, " +
-            "original_path = path, " +
-            "folder_id = NULL, " +
             "updated_at = NOW() " +
             "WHERE id = #{id}")
     void softDeleteFile(@Param("id") Long id,
@@ -274,7 +270,6 @@ public interface FileNodeMapper {
             "is_deleted = 1, " +
             "deleted_at = NOW(), " +
             "delete_expires_at = #{expiresAt}, " +
-            "path = CONCAT(#{recycleBinPath}, SUBSTRING(path, LENGTH(#{oldPathPrefix}) + 1)), " +
             "updated_at = NOW() " +
             "WHERE folder_id = #{folderId} AND is_deleted = 0")
     void softDeleteAllFilesInFolder(@Param("folderId") Long folderId,
@@ -398,5 +393,30 @@ public interface FileNodeMapper {
                                                      @Param("lastExtension") String lastExtension,
                                                      @Param("lastId") Long lastId,
                                                      @Param("limit") int limit);
+    
+    /**
+     * 查询文件夹中的活跃文件（用于异步删除）
+     */
+    @Select("SELECT * FROM file_nodes " +
+            "WHERE folder_id = #{folderId} " +
+            "AND is_deleted = 0 " +
+            "AND directory_status = 'active' " +
+            "ORDER BY id ASC")
+    List<FileNode> findActiveChildren(@Param("folderId") Long folderId);
+    
+    /**
+     * 更新节点的 last_del_uuid 字段
+     */
+    @Update("UPDATE file_nodes SET last_del_uuid = #{batchId}, version = version + 1 WHERE id = #{id}")
+    void updateLastDelUuid(@Param("id") Long id, @Param("batchId") String batchId);
+    
+    /**
+     * 检查指定父目录下是否存在同名文件（不考虑删除状态）
+     */
+    @Select("SELECT COUNT(*) > 0 FROM file_nodes " +
+            "WHERE folder_id = #{folderId} " +
+            "AND name = #{name} " +
+            "AND is_deleted = 0")
+    Boolean existsByNameAndParentId(@Param("name") String name, @Param("folderId") Long folderId);
 
 }

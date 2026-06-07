@@ -3,8 +3,10 @@ package com.mizuka.cloudfilesystem.service;
 import com.mizuka.cloudfilesystem.dto.*;
 import com.mizuka.cloudfilesystem.entity.FileNode;
 import com.mizuka.cloudfilesystem.entity.FolderNode;
+import com.mizuka.cloudfilesystem.entity.RecycleBinTask;
 import com.mizuka.cloudfilesystem.mapper.FileNodeMapper;
 import com.mizuka.cloudfilesystem.mapper.FolderNodeMapper;
+import com.mizuka.cloudfilesystem.mapper.RecycleBinTaskMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -26,6 +28,12 @@ public class DirectoryService {
     
     @Autowired
     private FileNodeMapper fileNodeMapper;
+    
+    @Autowired
+    private AsyncDirectoryDeleteService asyncDirectoryDeleteService;
+    
+    @Autowired
+    private RecycleBinTaskMapper recycleBinTaskMapper;
     
     /**
      * 默认每页最大数量
@@ -701,6 +709,7 @@ public class DirectoryService {
         vo.setParentId(folder.getParentId());
         vo.setCreatedAt(folder.getCreatedAt());
         vo.setUpdatedAt(folder.getUpdatedAt());
+        vo.setVersion(folder.getVersion());
         
         // 从缓存的 Map 中获取子节点数量
         int childCount = childCountMap.getOrDefault(folder.getId(), 0);
@@ -744,6 +753,7 @@ public class DirectoryService {
         vo.setExtension(file.getExtension());
         vo.setCreatedAt(file.getCreatedAt());
         vo.setUpdatedAt(file.getUpdatedAt());
+        vo.setVersion(file.getVersion());
         
         // 回收站特有字段
         if ("in_recycle_bin".equals(file.getDirectoryStatus())) {
@@ -794,49 +804,79 @@ public class DirectoryService {
     
     /**
      * 删除节点（软删除，移入回收站）
+     * 文件夹将启动后台异步递归删除，文件直接标记删除
      * 
      * @param nodeId 节点ID
+     * @param nodeType 节点类型（0为文件夹，1为文件）
      * @param userId 用户ID
+     * @param version 乐观锁版本号
+     * @param sessionId 会话ID（用于追踪异步删除进度）
      * @return 删除响应
      */
     @Transactional
-    public DeleteNodeResponse deleteNode(Long nodeId, Long userId) {
+    public DeleteNodeResponse deleteNode(Long nodeId, Integer nodeType, Long userId, Long version, String sessionId) {
         // 1. 参数校验
         if (nodeId == null) {
             throw new IllegalArgumentException("节点ID不能为空");
         }
         
-        // 2. 先尝试查找文件夹
-        FolderNode folder = folderNodeMapper.findById(nodeId);
+        if (nodeType == null) {
+            throw new IllegalArgumentException("节点类型不能为空");
+        }
         
-        if (folder != null) {
-            // 是文件夹，验证权限
+        // 2. 根据 nodeType 分别处理
+        if (nodeType == 0) {
+            // 文件夹删除逻辑
+            FolderNode folder = folderNodeMapper.findById(nodeId);
+            
+            if (folder == null) {
+                throw new RuntimeException("文件夹不存在");
+            }
+            
+            // 验证权限
             if (folder.getUserId() != null && !userId.equals(folder.getUserId())) {
                 throw new RuntimeException("无权删除该文件夹");
+            }
+            
+            // 乐观锁校验：检查版本号
+            if (!folder.getVersion().equals(version)) {
+                throw new com.mizuka.cloudfilesystem.exception.OptimisticLockException(
+                    "文件夹已被其他人修改，请刷新后重试"
+                );
             }
             
             // 计算回收站路径和过期时间
             String recycleBinPath = calculateRecycleBinPath(folder.getPath(), userId);
             LocalDateTime expiresAt = LocalDateTime.now().plusDays(30); // 30天后过期
             
-            // 执行软删除（包括所有子节点）
-            softDeleteFolder(nodeId, recycleBinPath, expiresAt);
+            // 1. 先标记根目录为删除状态（立即移入回收站）
+            softDeleteFolderRoot(nodeId, recycleBinPath, expiresAt);
             
-            log.info("用户 {} 软删除文件夹 - NodeId: {}, RecycleBinPath: {}", userId, nodeId, recycleBinPath);
+            log.info("用户 {} 软删除文件夹根节点 - NodeId: {}, RecycleBinPath: {}", userId, nodeId, recycleBinPath);
+            
+            // 2. 启动后台异步任务递归删除子节点
+            asyncDirectoryDeleteService.asyncDeleteFolder(nodeId, sessionId, userId, recycleBinPath, expiresAt);
             
             return new DeleteNodeResponse(recycleBinPath, expiresAt);
             
-        } else {
-            // 尝试查找文件
+        } else if (nodeType == 1) {
+            // 文件删除逻辑
             FileNode file = fileNodeMapper.findById(nodeId);
             
             if (file == null) {
-                throw new RuntimeException("节点不存在");
+                throw new RuntimeException("文件不存在");
             }
             
             // 验证权限
             if (file.getUserId() != null && !userId.equals(file.getUserId())) {
                 throw new RuntimeException("无权删除该文件");
+            }
+            
+            // 乐观锁校验：检查版本号
+            if (!file.getVersion().equals(version)) {
+                throw new com.mizuka.cloudfilesystem.exception.OptimisticLockException(
+                    "文件已被其他人修改，请刷新后重试"
+                );
             }
             
             // 计算回收站路径和过期时间
@@ -849,6 +889,9 @@ public class DirectoryService {
             log.info("用户 {} 软删除文件 - NodeId: {}, RecycleBinPath: {}", userId, nodeId, recycleBinPath);
             
             return new DeleteNodeResponse(recycleBinPath, expiresAt);
+            
+        } else {
+            throw new IllegalArgumentException("无效的节点类型，0为文件夹，1为文件");
         }
     }
     
@@ -927,7 +970,15 @@ public class DirectoryService {
     }
     
     /**
-     * 软删除文件夹（包括所有子节点）
+     * 软删除文件夹根节点（不包括子节点）
+     */
+    private void softDeleteFolderRoot(Long folderId, String recycleBinPath, LocalDateTime expiresAt) {
+        // 仅更新当前文件夹，不递归处理子节点
+        folderNodeMapper.softDeleteFolder(folderId, recycleBinPath, expiresAt);
+    }
+    
+    /**
+     * 软删除文件夹（包括所有子节点）- 保留用于兼容
      */
     private void softDeleteFolder(Long folderId, String recycleBinPath, LocalDateTime expiresAt) {
         // 更新当前文件夹
@@ -1431,8 +1482,380 @@ public class DirectoryService {
             if (createdAtObj instanceof java.time.LocalDateTime) {
                 vo.setCreatedAt((java.time.LocalDateTime) createdAtObj);
             }
+            
+            // 版本号
+            Object versionObj = record.get("version");
+            if (versionObj != null) {
+                vo.setVersion(((Number) versionObj).longValue());
+            }
 
             return vo;
         }).collect(Collectors.toList());
+    }
+    
+    /**
+     * 恢复节点（支持 204 状态码和新响应格式）
+     * 
+     * @param nodeId 节点ID
+     * @param userId 用户ID
+     * @return 恢复结果
+     */
+    @Transactional
+    public RestoreResult restoreNodeWithNewFormat(Long nodeId, Long userId) {
+        // 1. 先尝试查找文件夹
+        FolderNode folder = folderNodeMapper.findInRecycleBinById(nodeId);
+        boolean isFolder = true;
+        
+        if (folder == null) {
+            // 尝试查找文件
+            FileNode file = fileNodeMapper.findInRecycleBinById(nodeId);
+            if (file == null) {
+                throw new RuntimeException("节点不存在或不在回收站中");
+            }
+            isFolder = false;
+            
+            // 验证权限
+            if (file.getUserId() != null && !userId.equals(file.getUserId())) {
+                throw new RuntimeException("无权恢复该文件");
+            }
+            
+            // 检查是否已过期
+            if (file.getDeleteExpiresAt() != null && file.getDeleteExpiresAt().isBefore(LocalDateTime.now())) {
+                throw new RuntimeException("该节点已过期，无法恢复");
+            }
+            
+            // 执行文件恢复
+            return restoreFileWithNewFormat(file, userId);
+        } else {
+            // 是文件夹
+            // 验证权限
+            if (folder.getUserId() != null && !userId.equals(folder.getUserId())) {
+                throw new RuntimeException("无权恢复该文件夹");
+            }
+            
+            // 检查是否已过期
+            if (folder.getDeleteExpiresAt() != null && folder.getDeleteExpiresAt().isBefore(LocalDateTime.now())) {
+                throw new RuntimeException("该节点已过期，无法恢复");
+            }
+            
+            // 执行文件夹恢复
+            return restoreFolderWithNewFormat(folder, userId);
+        }
+    }
+    
+    /**
+     * 恢复文件夹（新格式）
+     */
+    private RestoreResult restoreFolderWithNewFormat(FolderNode folder, Long userId) {
+        String restorePath;
+        String newName;
+        int httpCode;
+        String message;
+        
+        // 判断原始位置是否仍存在
+        // 注意：软删除时 parent_id 保持不变，直接使用当前的 parentId
+        FolderNode parentNode = null;
+        if (folder.getParentId() != null) {
+            parentNode = folderNodeMapper.findById(folder.getParentId());
+        }
+        
+        boolean originalLocationExists = (parentNode != null && "active".equals(parentNode.getDirectoryStatus()));
+        
+        if (originalLocationExists) {
+            // 恢复到原位置
+            restorePath = buildPath(parentNode.getPath(), folder.getName());
+            newName = folder.getName();
+            httpCode = 200;
+            message = "恢复成功";
+            
+            // 执行恢复
+            folderNodeMapper.restoreFolder(folder.getId(), folder.getParentId(), restorePath);
+        } else {
+            // 恢复到用户根目录并重命名
+            FolderNode userRoot = folderNodeMapper.findUserRoot(userId);
+            if (userRoot == null) {
+                throw new RuntimeException("用户根目录不存在");
+            }
+            
+            newName = generateUniqueName(folder.getName(), userRoot.getId(), true);
+            restorePath = buildPath(userRoot.getPath(), newName);
+            httpCode = 204;
+            message = "原父目录不存在或已删除，已恢复到用户根目录";
+            
+            // 执行恢复并重命名
+            folderNodeMapper.restoreFolder(folder.getId(), userRoot.getId(), restorePath);
+        }
+        
+        // 更新 last_del_uuid 为恢复批次号
+        String restoreBatchId = java.util.UUID.randomUUID().toString();
+        folderNodeMapper.updateLastDelUuid(folder.getId(), restoreBatchId);
+        
+        // 更新任务状态
+        if (folder.getLastDelUuid() != null) {
+            recycleBinTaskMapper.updateTask(folder.getLastDelUuid(), 1, LocalDateTime.now(), null, null, null);
+        }
+        
+        // 构建响应
+        RestoreData data = new RestoreData();
+        data.setNewName(sanitizeFileName(newName));
+        data.setNodeType("folder");
+        data.setRestoredPath(restorePath);
+        data.setNewVersion(folder.getVersion() + 1);
+        
+        return new RestoreResult(httpCode, true, message, data);
+    }
+    
+    /**
+     * 恢复文件（新格式）
+     */
+    private RestoreResult restoreFileWithNewFormat(FileNode file, Long userId) {
+        String restorePath;
+        String newName;
+        int httpCode;
+        String message;
+        
+        // 判断原始位置是否仍存在
+        // 注意：软删除时 folder_id 保持不变，直接使用当前的 folderId
+        FolderNode parentFolder = null;
+        if (file.getFolderId() != null) {
+            parentFolder = folderNodeMapper.findById(file.getFolderId());
+        }
+        
+        boolean originalLocationExists = (parentFolder != null && "active".equals(parentFolder.getDirectoryStatus()));
+        
+        if (originalLocationExists) {
+            // 恢复到原位置
+            restorePath = buildPath(parentFolder.getPath(), file.getName());
+            newName = file.getName();
+            httpCode = 200;
+            message = "恢复成功";
+            
+            // 执行恢复
+            fileNodeMapper.restoreFile(file.getId(), file.getFolderId(), restorePath);
+        } else {
+            // 恢复到用户根目录并重命名
+            FolderNode userRoot = folderNodeMapper.findUserRoot(userId);
+            if (userRoot == null) {
+                throw new RuntimeException("用户根目录不存在");
+            }
+            
+            newName = generateUniqueName(file.getName(), userRoot.getId(), false);
+            restorePath = buildPath(userRoot.getPath(), newName);
+            httpCode = 204;
+            message = "原父目录不存在或已删除，已恢复到用户根目录";
+            
+            // 执行恢复并重命名
+            fileNodeMapper.restoreFile(file.getId(), userRoot.getId(), restorePath);
+        }
+        
+        // 更新 last_del_uuid 为恢复批次号
+        String restoreBatchId = java.util.UUID.randomUUID().toString();
+        fileNodeMapper.updateLastDelUuid(file.getId(), restoreBatchId);
+        
+        // 更新任务状态
+        if (file.getLastDelUuid() != null) {
+            recycleBinTaskMapper.updateTask(file.getLastDelUuid(), 1, LocalDateTime.now(), null, null, null);
+        }
+        
+        // 构建响应
+        RestoreData data = new RestoreData();
+        data.setNewName(sanitizeFileName(newName));
+        data.setNodeType("file");
+        data.setRestoredPath(restorePath);
+        data.setNewVersion(file.getVersion() + 1);
+        
+        return new RestoreResult(httpCode, true, message, data);
+    }
+    
+    /**
+     * 生成唯一文件名（避免重名）
+     */
+    private String generateUniqueName(String originalName, Long parentId, boolean isFolder) {
+        String baseName = originalName;
+        String extension = "";
+        
+        // 分离文件名和扩展名
+        int dotIndex = originalName.lastIndexOf('.');
+        if (dotIndex > 0) {
+            baseName = originalName.substring(0, dotIndex);
+            extension = originalName.substring(dotIndex);
+        }
+        
+        // 尝试生成唯一名称
+        int counter = 1;
+        String newName = originalName;
+        while ((isFolder && folderNodeMapper.existsByNameAndParentId(newName, parentId)) ||
+               (!isFolder && fileNodeMapper.existsByNameAndParentId(newName, parentId))) {
+            newName = baseName + "(" + counter + ")" + extension;
+            counter++;
+            
+            // 防止无限循环
+            if (counter > 1000) {
+                newName = java.util.UUID.randomUUID().toString() + extension;
+                break;
+            }
+        }
+        
+        return newName;
+    }
+    
+    /**
+     * 构建完整路径
+     */
+    private String buildPath(String parentPath, String name) {
+        if (parentPath == null || parentPath.isEmpty()) {
+            return name;
+        }
+        return parentPath.endsWith("/") ? parentPath + name : parentPath + "/" + name;
+    }
+    
+    /**
+     * 清理文件名中的特殊字符
+     */
+    private String sanitizeFileName(String fileName) {
+        if (fileName == null) {
+            return null;
+        }
+        return fileName.replaceAll("[/\\\\:*?\"<>|]", "_");
+    }
+    
+    /**
+     * 删除节点（支持 batchId 和 recycle_bin_tasks 表）
+     * 
+     * @param nodeId 节点ID
+     * @param nodeType 节点类型（0为文件夹，1为文件）
+     * @param userId 用户ID
+     * @param version 乐观锁版本号
+     * @param batchId 批次号（UUID格式）
+     * @return 删除响应
+     */
+    @Transactional
+    public DeleteNodeResponse deleteNodeWithBatchId(Long nodeId, Integer nodeType, Long userId, Long version, String batchId) {
+        // 1. 参数校验
+        if (nodeId == null) {
+            throw new IllegalArgumentException("节点ID不能为空");
+        }
+        
+        if (nodeType == null) {
+            throw new IllegalArgumentException("节点类型不能为空");
+        }
+        
+        // 2. 创建回收站任务记录
+        RecycleBinTask task = new RecycleBinTask();
+        task.setBatchId(batchId);
+        task.setUserId(userId);
+        task.setRootNodeId(nodeId);
+        task.setNodeType(nodeType);
+        task.setOperationType(0); // 删除操作
+        task.setStatus(0); // 进行中
+        task.setProcessedCount(0);
+        task.setTotalCount(0); // 异步扫描后更新
+        task.setCreatedAt(LocalDateTime.now());
+        
+        Long taskId = recycleBinTaskMapper.insert(task);
+        log.info("创建回收站任务 - BatchId: {}, TaskId: {}", batchId, taskId);
+        
+        // 3. 根据 nodeType 分别处理
+        if (nodeType == 0) {
+            // 文件夹删除逻辑
+            FolderNode folder = folderNodeMapper.findById(nodeId);
+            
+            if (folder == null) {
+                throw new RuntimeException("文件夹不存在");
+            }
+            
+            // 验证权限
+            if (folder.getUserId() != null && !userId.equals(folder.getUserId())) {
+                throw new RuntimeException("无权删除该文件夹");
+            }
+            
+            // 乐观锁校验
+            if (!folder.getVersion().equals(version)) {
+                throw new com.mizuka.cloudfilesystem.exception.OptimisticLockException(
+                    "文件夹已被其他人修改，请刷新后重试"
+                );
+            }
+            
+            // 计算回收站路径和过期时间
+            String recycleBinPath = calculateRecycleBinPath(folder.getPath(), userId);
+            LocalDateTime expiresAt = LocalDateTime.now().plusDays(30);
+            
+            // 标记根节点为删除状态
+            softDeleteFolderRoot(nodeId, recycleBinPath, expiresAt);
+            
+            // 更新节点的 last_del_uuid
+            folderNodeMapper.updateLastDelUuid(nodeId, batchId);
+            
+            log.info("用户 {} 软删除文件夹根节点 - NodeId: {}, BatchId: {}", userId, nodeId, batchId);
+            
+            // 启动后台异步任务递归删除子节点
+            asyncDirectoryDeleteService.asyncDeleteFolderWithBatchId(
+                nodeId, batchId, userId, recycleBinPath, expiresAt
+            );
+            
+            return new DeleteNodeResponse(recycleBinPath, expiresAt);
+            
+        } else if (nodeType == 1) {
+            // 文件删除逻辑
+            FileNode file = fileNodeMapper.findById(nodeId);
+            
+            if (file == null) {
+                throw new RuntimeException("文件不存在");
+            }
+            
+            // 验证权限
+            if (file.getUserId() != null && !userId.equals(file.getUserId())) {
+                throw new RuntimeException("无权删除该文件");
+            }
+            
+            // 乐观锁校验
+            if (!file.getVersion().equals(version)) {
+                throw new com.mizuka.cloudfilesystem.exception.OptimisticLockException(
+                    "文件已被其他人修改，请刷新后重试"
+                );
+            }
+            
+            // 计算回收站路径和过期时间
+            String recycleBinPath = calculateRecycleBinPath(file.getPath(), userId);
+            LocalDateTime expiresAt = LocalDateTime.now().plusDays(30);
+            
+            // 执行软删除
+            softDeleteFile(nodeId, recycleBinPath, expiresAt);
+            
+            // 更新文件的 last_del_uuid
+            fileNodeMapper.updateLastDelUuid(nodeId, batchId);
+            
+            // 更新任务状态为已完成
+            recycleBinTaskMapper.updateTask(batchId, 1, LocalDateTime.now(), null, 1, 1);
+            
+            log.info("用户 {} 软删除文件 - NodeId: {}, BatchId: {}", userId, nodeId, batchId);
+            
+            return new DeleteNodeResponse(recycleBinPath, expiresAt);
+            
+        } else {
+            throw new IllegalArgumentException("无效的节点类型，0为文件夹，1为文件");
+        }
+    }
+    
+    /**
+     * 根据节点ID获取 batchId
+     * 
+     * @param nodeId 节点ID
+     * @return batchId，如果不存在则返回 null
+     */
+    public String getBatchIdByNodeId(Long nodeId) {
+        // 先尝试从文件夹表中查找
+        FolderNode folder = folderNodeMapper.findInRecycleBinById(nodeId);
+        if (folder != null && folder.getLastDelUuid() != null) {
+            return folder.getLastDelUuid();
+        }
+        
+        // 再尝试从文件表中查找
+        FileNode file = fileNodeMapper.findInRecycleBinById(nodeId);
+        if (file != null && file.getLastDelUuid() != null) {
+            return file.getLastDelUuid();
+        }
+        
+        return null;
     }
 }

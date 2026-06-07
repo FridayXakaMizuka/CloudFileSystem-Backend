@@ -70,4 +70,9 @@ public class SearchResultVO {
      * 创建时间
      */
     private LocalDateTime createdAt;
+    
+    /**
+     * 乐观锁版本号，用于并发控制
+     */
+    private Long version;
 }

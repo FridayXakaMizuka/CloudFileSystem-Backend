@@ -255,7 +255,9 @@ public interface FolderNodeMapper {
     /**
      * 从回收站中根据ID查询文件夹
      */
-    @Select("SELECT * FROM folder_nodes WHERE id = #{id} AND directory_status = 'in_recycle_bin'")
+    @Select("SELECT * FROM folder_nodes WHERE id = #{id} " +
+            "AND directory_status = 'in_recycle_bin' " +
+            "LIMIT 1")
     FolderNode findInRecycleBinById(@Param("id") Long id);
     
     /**
@@ -266,10 +268,6 @@ public interface FolderNodeMapper {
             "is_deleted = 1, " +
             "deleted_at = NOW(), " +
             "delete_expires_at = #{expiresAt}, " +
-            "path = #{recycleBinPath}, " +
-            "original_parent_id = parent_id, " +
-            "original_path = path, " +
-            "parent_id = NULL, " +
             "updated_at = NOW() " +
             "WHERE id = #{id}")
     void softDeleteFolder(@Param("id") Long id,
@@ -284,7 +282,6 @@ public interface FolderNodeMapper {
             "is_deleted = 1, " +
             "deleted_at = NOW(), " +
             "delete_expires_at = #{expiresAt}, " +
-            "path = CONCAT(#{recycleBinPath}, SUBSTRING(path, LENGTH(#{oldPathPrefix}) + 1)), " +
             "updated_at = NOW() " +
             "WHERE parent_id = #{folderId} AND is_deleted = 0")
     void softDeleteAllChildrenFolders(@Param("folderId") Long folderId,
@@ -344,12 +341,13 @@ public interface FolderNodeMapper {
     
     /**
      * 标记文件夹为待分配状态（进入待分配池）
+     * 注意：path 字段设置为空字符串而不是 NULL，以避免数据库约束错误
      */
     @Update("UPDATE folder_nodes SET " +
             "directory_status = 'unassigned', " +
             "user_id = NULL, " +
             "parent_id = NULL, " +
-            "path = NULL, " +
+            "path = '', " +
             "is_deleted = 0, " +
             "deleted_at = NULL, " +
             "delete_expires_at = NULL, " +
@@ -434,4 +432,51 @@ public interface FolderNodeMapper {
     FolderNode findByNameAndParent(@Param("parentId") Long parentId,
                                     @Param("folderName") String folderName,
                                     @Param("userId") Long userId);
+    
+    /**
+     * 查询直接子文件夹（用于异步删除）
+     */
+    @Select("SELECT * FROM folder_nodes " +
+            "WHERE parent_id = #{parentId} " +
+            "AND is_deleted = 0 " +
+            "ORDER BY id ASC")
+    List<FolderNode> findChildren(@Param("parentId") Long parentId);
+    
+    /**
+     * 递归查询所有后代文件夹（用于统计）
+     */
+    @Select("WITH RECURSIVE descendants AS (" +
+            "  SELECT * FROM folder_nodes WHERE parent_id = #{folderId} AND is_deleted = 0" +
+            "  UNION ALL" +
+            "  SELECT fn.* FROM folder_nodes fn " +
+            "  INNER JOIN descendants d ON fn.parent_id = d.id " +
+            "  WHERE fn.is_deleted = 0" +
+            ") SELECT * FROM descendants")
+    List<FolderNode> findAllDescendants(@Param("folderId") Long folderId);
+    
+    /**
+     * 更新节点的 last_del_uuid 字段
+     */
+    @Update("UPDATE folder_nodes SET last_del_uuid = #{batchId}, version = version + 1 WHERE id = #{id}")
+    void updateLastDelUuid(@Param("id") Long id, @Param("batchId") String batchId);
+    
+    /**
+     * 检查指定父目录下是否存在同名文件夹（不考虑删除状态）
+     */
+    @Select("SELECT COUNT(*) > 0 FROM folder_nodes " +
+            "WHERE parent_id = #{parentId} " +
+            "AND name = #{name} " +
+            "AND is_deleted = 0")
+    Boolean existsByNameAndParentId(@Param("name") String name, @Param("parentId") Long parentId);
+    
+    /**
+     * 查找用户的根目录
+     * 用户根目录的父目录应该是 _root/_files，而不是 NULL
+     */
+    @Select("SELECT * FROM folder_nodes " +
+            "WHERE user_id = #{userId} " +
+            "AND parent_id = (SELECT id FROM folder_nodes WHERE path = '_root/_files') " +
+            "AND directory_status = 'active' " +
+            "LIMIT 1")
+    FolderNode findUserRoot(@Param("userId") Long userId);
 }

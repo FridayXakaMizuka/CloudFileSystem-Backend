@@ -50,7 +50,22 @@ trustedBrowsers:
     port: 6378
     database: 0
     timeout: 3000ms
+
+# 回收站Redis配置（单一数据库存储所有batchId信息）
+recycle:
+  redis:
+    host: localhost
+    port: 6381
+    database: 0  # 统一使用数据库0存储所有回收站相关数据
+    timeout: 3000ms
+    lettuce:
+      pool:
+        max-active: 50  # 最大活跃连接数
+        max-idle: 20    # 最大空闲连接数
+        min-idle: 5     # 最小空闲连接数
+
 mybatis:
+  mapper-locations: classpath:mapper/*.xml
   configuration:
     map-underscore-to-camel-case: true
 server:

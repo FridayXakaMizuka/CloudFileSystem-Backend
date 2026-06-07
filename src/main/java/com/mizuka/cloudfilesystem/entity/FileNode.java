@@ -66,9 +66,15 @@ public class FileNode {
     // 原始完整路径（删除时记录，用于恢复）
     private String originalPath;
 
+    // 最后一次删除的UUID批次号（用于追踪异步删除操作）
+    private String lastDelUuid;
+
     // 创建时间
     private LocalDateTime createdAt;
 
     // 更新时间
     private LocalDateTime updatedAt;
+
+    // 版本号
+    private Long version;
 }
