@@ -13,15 +13,12 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class RecycleBinItemDTO {
+    private String batchId;
     private Long id;
     private String name;
     private String type; // "folder" or "file"
     private Long size;
     private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
     private LocalDateTime deletedAt;
-    private LocalDateTime expiresAt;
-    private Integer daysRemaining;
     private Long version;
-    private String batchId;
 }

@@ -31,6 +31,7 @@ public class FileNode {
     private String name;
 
     // 完整路径，如 _root/_files/10001/documents/file.pdf
+    // @Deprecated 未来版本将移除，改用 folder_id + Redis 动态生成
     private String path;
 
     // 文件大小（字节）
@@ -41,9 +42,6 @@ public class FileNode {
 
     // 文件扩展名
     private String extension;
-
-    // 同级节点排序顺序
-    private Integer sortOrder;
 
     // 是否隐藏
     private Boolean isHidden;
@@ -59,12 +57,6 @@ public class FileNode {
 
     // 文件状态：活跃/回收站中/已彻底删除
     private String directoryStatus;
-
-    // 原始所属文件夹ID（删除时记录，用于恢复）
-    private Long originalFolderId;
-
-    // 原始完整路径（删除时记录，用于恢复）
-    private String originalPath;
 
     // 最后一次删除的UUID批次号（用于追踪异步删除操作）
     private String lastDelUuid;

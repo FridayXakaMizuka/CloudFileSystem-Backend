@@ -28,13 +28,11 @@ public class FolderNode {
     private String name;
 
     // 完整路径，如 _root/_files/10001/documents
+    // @Deprecated 未来版本将移除，改用 parent_ids + Redis 动态生成
     private String path;
 
     // 层级深度，根目录为0
     private Integer level;
-
-    // 同级节点排序顺序
-    private Integer sortOrder;
 
     // 是否隐藏
     private Boolean isHidden;
@@ -53,12 +51,6 @@ public class FolderNode {
 
     // 进入待分配池的时间（逻辑标记，无物理存储）
     private LocalDateTime unassignedAt;
-
-    // 原始父文件夹ID（删除时记录，用于恢复）
-    private Long originalParentId;
-
-    // 原始完整路径（删除时记录，用于恢复）
-    private String originalPath;
 
     // 最后一次删除的UUID批次号（用于追踪异步删除操作）
     private String lastDelUuid;

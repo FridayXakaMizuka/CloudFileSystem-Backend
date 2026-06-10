@@ -12,7 +12,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 /**
  * 二次验证Redis配置
- * 使用独立的Redis实例（端口6378）存储临时会话信息
+ * 使用统一的Redis实例（端口6379，数据库2）存储临时会话信息
  */
 @Configuration
 public class TrustedBrowsersRedisConfig {
@@ -20,7 +20,7 @@ public class TrustedBrowsersRedisConfig {
     @Value("${trustedBrowsers.redis.host:localhost}")
     private String host;
     
-    @Value("${trustedBrowsers.redis.port:6378}")
+    @Value("${trustedBrowsers.redis.port:6379}")
     private int port;
     
     @Value("${trustedBrowsers.redis.database:0}")

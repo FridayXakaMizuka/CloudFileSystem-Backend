@@ -727,7 +727,7 @@ public class UserService {
             // 2. 构建Redis缓存key
             String cacheKey = "profile:" + userId;
 
-            // 3. 尝试从Redis缓存获取（端口6380）
+            // 3. 尝试从Redis缓存获取（端口6379，数据库1）
             String cachedProfile = profileRedisTemplate.opsForValue().get(cacheKey);
             if (cachedProfile != null) {
                 logger.info("[获取个人资料] 缓存命中 - UserId: {}", userId);

@@ -8,6 +8,8 @@ import com.mizuka.cloudfilesystem.exception.OptimisticLockException;
 import com.mizuka.cloudfilesystem.mapper.FileNodeMapper;
 import com.mizuka.cloudfilesystem.mapper.FolderNodeMapper;
 import com.mizuka.cloudfilesystem.mapper.RecycleBinTaskMapper;
+import com.mizuka.cloudfilesystem.service.AsyncPermanentDeleteService;
+import com.mizuka.cloudfilesystem.service.AsyncRecycleBinRestoreService;
 import com.mizuka.cloudfilesystem.service.DirectoryService;
 import com.mizuka.cloudfilesystem.service.RecycleBinService;
 import com.mizuka.cloudfilesystem.util.Result;
@@ -37,6 +39,12 @@ public class FileController {
     
     @Autowired
     private RecycleBinTaskMapper recycleBinTaskMapper;
+    
+    @Autowired
+    private AsyncRecycleBinRestoreService asyncRecycleBinRestoreService;
+    
+    @Autowired
+    private AsyncPermanentDeleteService asyncPermanentDeleteService;
     
     @Autowired
     private FolderNodeMapper folderNodeMapper;
@@ -348,17 +356,15 @@ public class FileController {
     }
     
     /**
-     * 恢复回收站中的节点（新格式）
+     * 恢复回收站中的节点（新架构 - 同步完成）
      * POST /recycle/restore
      * 
      * @param batchId 业务操作批次号（UUID格式）
-     * @param version 乐观锁版本号
      * @return 恢复结果
      */
     @PostMapping("/recycle/restore")
     public ResponseEntity<?> restoreNode(
-            @RequestParam String batchId,
-            @RequestParam Long version) {
+            @RequestParam String batchId) {
         
         try {
             // 从JWT令牌中获取当前用户ID
@@ -376,37 +382,46 @@ public class FileController {
                     .body(Result.error(40001, "batchId不能为空"));
             }
             
-            if (version == null) {
-                return ResponseEntity.badRequest()
-                    .body(Result.error(40001, "版本号不能为空"));
-            }
-            
-            // 通过 batchId 查找节点
+            // 验证任务存在性和权限
             RecycleBinTask task = recycleBinTaskMapper.findByBatchId(batchId);
             if (task == null) {
+                log.warn("[恢复回收站] 任务不存在 - BatchId: {}", batchId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Result.error(40401, "回收站任务不存在或已处理"));
             }
             
+            log.info("[恢复回收站] 查询到任务 - BatchId: {}, Status: {}, OperationType: {}, RootNodeId: {}",
+                batchId, task.getStatus(), task.getOperationType(), task.getRootNodeId());
+            
             // 验证权限
             if (!userId.equals(task.getUserId())) {
+                log.warn("[恢复回收站] 权限不足 - UserId: {}, TaskUserId: {}", userId, task.getUserId());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Result.error(40301, "无权恢复该节点"));
             }
             
-            // 调用新的恢复方法
-            RestoreResult result = directoryService.restoreNodeWithNewFormat(task.getRootNodeId(), userId);
-            
-            log.info("用户 {} 恢复节点成功 - BatchId: {}, NodeId: {}, Code: {}, Message: {}", 
-                userId, batchId, task.getRootNodeId(), result.getCode(), result.getMessage());
-            
-            // 根据状态码返回不同的 HTTP 响应
-            if (result.getCode() == 204) {
-                return ResponseEntity.status(HttpStatus.NO_CONTENT)
-                    .body(Result.success(result.getMessage(), result.getData()));
-            } else {
-                return ResponseEntity.ok(Result.success(result.getMessage(), result.getData()));
+            // 【关键】检查 operation_type 是否为 0（在回收站中）
+            if (task.getOperationType() != 0) {
+                log.warn("[恢复回收站] 任务不是删除任务，无法恢复 - BatchId: {}, OperationType: {}", 
+                    batchId, task.getOperationType());
+                return ResponseEntity.badRequest()
+                    .body(Result.error(40001, "该节点不在回收站中或已被其他操作处理"));
             }
+            
+            // 【关键】如果任务状态是 1（已完成），说明之前恢复过，需要重置状态
+            if (task.getStatus() == 1) {
+                log.info("[恢复回收站] 任务之前已完成，重置状态为进行中 - BatchId: {}", batchId);
+                recycleBinTaskMapper.updateTaskStatus(batchId, 0); // 重置为进行中
+            }
+            
+            // 【新架构】调用同步恢复方法
+            log.info("[恢复回收站] 开始恢复 - UserId: {}, BatchId: {}", userId, batchId);
+            com.mizuka.cloudfilesystem.dto.RestoreResult result = directoryService.restoreNode(batchId, userId);
+            
+            log.info("用户 {} 恢复节点成功（新架构）- BatchId: {}, RootNodeId: {}, Result: {}", 
+                userId, batchId, task.getRootNodeId(), result.getMessage());
+            
+            return ResponseEntity.ok(Result.success("恢复成功", null));
             
         } catch (IllegalArgumentException e) {
             log.warn("参数错误: {}", e.getMessage());
@@ -414,7 +429,7 @@ public class FileController {
                 .body(Result.error(40001, e.getMessage()));
             
         } catch (RuntimeException e) {
-            if (e.getMessage().contains("无权访问")) {
+            if (e.getMessage().contains("无权访问") || e.getMessage().contains("无权恢复")) {
                 log.warn("权限不足: {}", e.getMessage());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Result.error(40301, e.getMessage()));
@@ -422,14 +437,10 @@ public class FileController {
                 log.warn("资源不存在: {}", e.getMessage());
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Result.error(40401, e.getMessage()));
-            } else if (e.getMessage().contains("已过期")) {
-                log.warn("节点已过期: {}", e.getMessage());
-                return ResponseEntity.status(HttpStatus.GONE)
-                    .body(Result.error(41001, e.getMessage()));
             } else {
                 log.error("服务器错误: {}", e.getMessage(), e);
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Result.error(50001, "系统繁忙，请稍后重试"));
+                    .body(Result.error(50001, e.getMessage()));
             }
         }
     }
@@ -441,6 +452,7 @@ public class FileController {
      * @param mode 模式：true=回收站模式，false=浏览界面模式
      * @param batchId 业务操作批次号（mode=true时需填写）
      * @param nodeId 节点ID（mode=false时需填写）
+     * @param nodeType 节点类型（mode=false时需填写，0=文件夹，1=文件）
      * @param version 乐观锁版本号（mode=false时需填写）
      * @return 操作结果
      */
@@ -449,6 +461,7 @@ public class FileController {
             @RequestParam Boolean mode,
             @RequestParam(required = false) String batchId,
             @RequestParam(required = false) Long nodeId,
+            @RequestParam(required = false) Integer nodeType,
             @RequestParam(required = false) Long version) {
         
         try {
@@ -465,10 +478,10 @@ public class FileController {
                 return Result.error(40001, "mode参数不能为空");
             }
             
-            Long targetNodeId;
+            String targetBatchId;
             
             if (mode) {
-                // 回收站模式：需要 batchId
+                // 【回收站模式】：需要 batchId
                 if (batchId == null || batchId.trim().isEmpty()) {
                     return Result.error(40001, "回收站模式必须提供 batchId");
                 }
@@ -484,48 +497,82 @@ public class FileController {
                     return Result.error(40301, "无权删除该节点");
                 }
                 
-                targetNodeId = task.getRootNodeId();
-                
-                // 终止异步操作（如果存在）
-                if (task.getStatus() == 0) { // 进行中
-                    recycleBinTaskMapper.updateTask(batchId, 3, LocalDateTime.now(), 
-                        "用户主动终止", null, null);
-                    log.info("用户 {} 终止异步操作 - BatchId: {}, NodeId: {}", userId, batchId, targetNodeId);
+                // 【关键】检查 operation_type 是否为 0（在回收站中）
+                if (task.getOperationType() != 0) {
+                    log.warn("[彻底删除] 节点不在回收站中 - BatchId: {}, OperationType: {}", 
+                        batchId, task.getOperationType());
+                    return Result.error(40001, "该节点不在回收站中或已被其他操作处理");
                 }
+                
+                // 【关键】如果任务状态是 1（已完成），说明之前处理过，需要重置状态
+                if (task.getStatus() == 1) {
+                    log.info("[彻底删除] 任务之前已完成，重置状态为进行中 - BatchId: {}", batchId);
+                    recycleBinTaskMapper.updateTaskStatus(batchId, 0);
+                }
+                
+                // 【关键】将 operation_type 更新为 2（标记为彻底删除任务）
+                log.info("[彻底删除] 更新 operation_type 为 2（彻底删除中）- BatchId: {}", batchId);
+                recycleBinTaskMapper.updateOperationType(batchId, 2);
+                
+                targetBatchId = batchId;  // 沿用旧的 batchId
+                
+                log.info("用户 {} 回收站模式彻底删除 - BatchId: {}, NodeId: {}, NodeType: {}", 
+                    userId, targetBatchId, task.getRootNodeId(), task.getNodeType());
+                
             } else {
-                // 浏览界面模式：需要 nodeId 和 version
+                // 【浏览界面模式】：需要 nodeId, nodeType 和 version
                 if (nodeId == null) {
                     return Result.error(40001, "浏览界面模式必须提供 nodeId");
                 }
                 
-                targetNodeId = nodeId;
+                if (nodeType == null) {
+                    return Result.error(40001, "浏览界面模式必须提供 nodeType");
+                }
                 
-                // 检查是否有正在进行的异步操作
-                String taskBatchId = directoryService.getBatchIdByNodeId(targetNodeId);
-                if (taskBatchId != null) {
-                    RecycleBinTask task = recycleBinTaskMapper.findByBatchId(taskBatchId);
-                    if (task != null && task.getStatus() == 0) { // 进行中
-                        // 终止异步操作
-                        recycleBinTaskMapper.updateTask(taskBatchId, 3, LocalDateTime.now(), 
-                            "用户主动终止", null, null);
-                        log.info("用户 {} 终止异步操作 - BatchId: {}, NodeId: {}", userId, taskBatchId, targetNodeId);
-                    }
+                // 检查是否有正在进行的异步操作（删除或恢复）
+                RecycleBinTask existingTask = recycleBinTaskMapper.findByRootNodeId(nodeId);
+                if (existingTask != null && existingTask.getStatus() == 0) { // 进行中
+                    String operationName = existingTask.getOperationType() == 0 ? "删除" : "恢复";
+                    log.info("用户 {} 检测到{}任务正在进行，先终止 - BatchId: {}, NodeId: {}", 
+                        userId, operationName, existingTask.getBatchId(), nodeId);
+                    
+                    // 终止异步操作
+                    recycleBinTaskMapper.updateTask(existingTask.getBatchId(), 3, LocalDateTime.now(), 
+                        "用户主动终止（开始彻底删除）", null, null);
+                    
+                    targetBatchId = existingTask.getBatchId();  // 沿用旧的 batchId
+                    
+                    // 【关键】重置状态并更新 operation_type
+                    recycleBinTaskMapper.updateTaskStatus(targetBatchId, 0);
+                    recycleBinTaskMapper.updateOperationType(targetBatchId, 2);
+                    
+                } else {
+                    // 没有正在进行的任务，创建新的彻底删除任务
+                    targetBatchId = asyncPermanentDeleteService.createPermanentDeleteTask(
+                        nodeId, nodeType, userId);
+                    
+                    // 【关键】将 operation_type 更新为 2（标记为彻底删除任务）
+                    log.info("[彻底删除] 更新 operation_type 为 2（彻底删除中）- BatchId: {}", targetBatchId);
+                    recycleBinTaskMapper.updateOperationType(targetBatchId, 2);
+                    
+                    log.info("用户 {} 浏览界面模式彻底删除（新建任务）- BatchId: {}, NodeId: {}, NodeType: {}", 
+                        userId, targetBatchId, nodeId, nodeType);
                 }
             }
             
-            // 执行彻底删除
-            directoryService.permanentDeleteNode(targetNodeId, userId);
+            // 【新架构】调用同步彻底删除方法
+            directoryService.permanentDeleteBatch(targetBatchId, userId);
             
-            log.info("用户 {} 彻底删除节点成功 - Mode: {}, TargetNodeId: {}", userId, mode, targetNodeId);
+            log.info("用户 {} 彻底删除完成（新架构）- BatchId: {}", userId, targetBatchId);
             
-            return Result.success("已彻底删除，目录进入待分配池", null);
+            return Result.success("彻底删除成功", null);
             
         } catch (IllegalArgumentException e) {
             log.warn("参数错误: {}", e.getMessage());
             return Result.error(40001, e.getMessage());
             
         } catch (RuntimeException e) {
-            if (e.getMessage().contains("无权访问")) {
+            if (e.getMessage().contains("无权访问") || e.getMessage().contains("无权删除")) {
                 log.warn("权限不足: {}", e.getMessage());
                 return Result.error(40301, e.getMessage());
             } else if (e.getMessage().contains("不存在")) {
@@ -533,7 +580,7 @@ public class FileController {
                 return Result.error(40401, e.getMessage());
             } else {
                 log.error("服务器错误: {}", e.getMessage(), e);
-                return Result.error(50001, "系统繁忙，请稍后重试");
+                return Result.error(50001, e.getMessage());
             }
         }
     }
@@ -650,7 +697,7 @@ public class FileController {
     
     /**
      * 获取恢复进程列表
-     * GET /recycle/restore/processes
+     * GET /files/recycle/restore/processes
      * 
      * @return 恢复进程列表
      */

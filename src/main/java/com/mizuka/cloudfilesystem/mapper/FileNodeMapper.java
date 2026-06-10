@@ -31,7 +31,7 @@ public interface FileNodeMapper {
             "<if test='lastNodeId != null'>" +
             "AND id &gt; #{lastNodeId} " +
             "</if>" +
-            "ORDER BY sort_order ASC, id ASC " +
+            "ORDER BY id ASC " +  // 移除 sort_order
             "LIMIT #{limit}" +
             "</script>")
     List<FileNode> findChildrenByCursor(@Param("folderId") Long folderId,
@@ -286,8 +286,6 @@ public interface FileNodeMapper {
             "delete_expires_at = NULL, " +
             "folder_id = #{folderId}, " +
             "path = #{path}, " +
-            "original_folder_id = NULL, " +
-            "original_path = NULL, " +
             "updated_at = NOW() " +
             "WHERE id = #{id}")
     void restoreFile(@Param("id") Long id,
@@ -411,6 +409,14 @@ public interface FileNodeMapper {
     void updateLastDelUuid(@Param("id") Long id, @Param("batchId") String batchId);
     
     /**
+     * 标记文件为永久删除（彻底删除）
+     */
+    @Update("UPDATE file_nodes SET directory_status = 'permanently_deleted', " +
+            "is_deleted = 1, last_del_uuid = NULL, deleted_at = NULL, delete_expires_at = NULL, " +
+            "version = version + 1 WHERE id = #{nodeId}")
+    int markAsPermanentlyDeleted(@Param("nodeId") Long nodeId);
+    
+    /**
      * 检查指定父目录下是否存在同名文件（不考虑删除状态）
      */
     @Select("SELECT COUNT(*) > 0 FROM file_nodes " +
@@ -418,5 +424,52 @@ public interface FileNodeMapper {
             "AND name = #{name} " +
             "AND is_deleted = 0")
     Boolean existsByNameAndParentId(@Param("name") String name, @Param("folderId") Long folderId);
+    
+    /**
+     * 根据条件查询子文件（用于恢复操作）
+     * 条件：directory_status = 'active' OR 
+     *       (directory_status = 'in_recycle_bin' AND 
+     *        (last_del_uuid = batchId OR last_del_uuid IS NULL))
+     */
+    @Select("SELECT * FROM file_nodes WHERE folder_id = #{folderId} AND (" +
+            "  directory_status = 'active' OR " +
+            "  (directory_status = 'in_recycle_bin' AND " +
+            "   (last_del_uuid = #{batchId} OR last_del_uuid IS NULL))" +
+            ") ORDER BY id ASC")
+    List<FileNode> findChildrenByConditions(@Param("folderId") Long folderId,
+                                            @Param("batchId") String batchId);
+    
+    /**
+     * 根据条件查询子文件（用于彻底删除的 BFS 遍历，支持断点续传）
+     * 
+     * @param folderId 父文件夹ID
+     * @param batchId 批次号
+     * @param lastFileId 断点：上次处理的最后一个文件ID
+     * @param limit 查询数量
+     * @return 子文件列表
+     */
+    @Select("SELECT * FROM file_nodes WHERE folder_id = #{folderId} AND (" +
+            "  directory_status = 'active' OR " +
+            "  (directory_status = 'in_recycle_bin' AND " +
+            "   (last_del_uuid = #{batchId} OR last_del_uuid IS NULL))" +
+            ") AND id > #{lastFileId} " +
+            "ORDER BY id ASC LIMIT #{limit}")
+    List<FileNode> findChildrenByConditionsWithCursor(@Param("folderId") Long folderId,
+                                                       @Param("batchId") String batchId,
+                                                       @Param("lastFileId") Long lastFileId,
+                                                       @Param("limit") int limit);
+    
+    /**
+     * 将文件移入待分配池（清空除 id 和 directory_status 外的所有信息）
+     */
+    @Update("UPDATE file_nodes SET " +
+            "name = NULL, path = NULL, folder_id = NULL, user_id = NULL, " +
+            "file_metadata_id = NULL, file_size = 0, mime_type = NULL, " +
+            "extension = NULL, is_hidden = 0, is_deleted = 0, " +
+            "deleted_at = NULL, delete_expires_at = NULL, " +
+            "last_del_uuid = NULL, directory_status = 'unassigned', " +
+            "unassigned_at = NOW(), version = version + 1 " +
+            "WHERE id = #{id}")
+    void moveToUnassignedPool(@Param("id") Long id);
 
 }

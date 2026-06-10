@@ -5,6 +5,7 @@
     <!-- 浏览回收站 -->
     <select id="browseRecycleBin" resultType="com.mizuka.cloudfilesystem.dto.RecycleBinItemDTO">
         SELECT 
+            rbt.batch_id AS batchId,
             COALESCE(fn.id, filen.id) AS id,
             COALESCE(fn.name, filen.name) AS name,
             CASE 
@@ -13,28 +14,25 @@
             END AS type,
             COALESCE(filen.file_size, 0) AS size,
             COALESCE(fn.created_at, filen.created_at) AS createdAt,
-            COALESCE(fn.updated_at, filen.updated_at) AS updatedAt,
             COALESCE(fn.deleted_at, filen.deleted_at) AS deletedAt,
-            COALESCE(fn.delete_expires_at, filen.delete_expires_at) AS expiresAt,
-            DATEDIFF(COALESCE(fn.delete_expires_at, filen.delete_expires_at), NOW()) AS daysRemaining,
-            COALESCE(fn.version, filen.version) AS version,
-            rbt.batch_id AS batchId
-            
+            COALESCE(fn.version, filen.version) AS version
+                
         FROM recycle_bin_tasks rbt
-        
+            
         LEFT JOIN folder_nodes fn 
             ON rbt.root_node_id = fn.id 
             AND rbt.node_type = 0
-            AND fn.directory_status = 'in_recycle_bin'
-            
+            -- 移除 directory_status 过滤，允许查询所有状态的节点
+                
         LEFT JOIN file_nodes filen 
             ON rbt.root_node_id = filen.id 
             AND rbt.node_type = 1
-            AND filen.directory_status = 'in_recycle_bin'
-            
+            -- 移除 directory_status 过滤，允许查询所有状态的节点
+                
         WHERE rbt.user_id = #{userId}
           AND rbt.operation_type = 0
-          
+          AND rbt.status IN (0, 1)  -- 仅查询"进行中"或"已完成"的删除任务
+              
           <!-- 游标分页 -->
           <if test="lastBatchId != null and lastBatchId != ''">
               AND rbt.created_at &lt; (
@@ -42,9 +40,9 @@
                   WHERE batch_id = #{lastBatchId} AND user_id = #{userId}
               )
           </if>
-          
+              
         ORDER BY rbt.created_at DESC
-        
+            
         LIMIT #{maxPageSize}
     </select>
 

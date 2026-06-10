@@ -47,7 +47,7 @@ public class TwoFactorAuthService {
     @Qualifier("rsaRedisTemplate")
     private RedisTemplate<String, Object> rsaRedisTemplate;
     
-    // 注入trustedBrowsersRedisTemplate（端口6378）用于存储浏览器临时信任设备
+    // 注入trustedBrowsersRedisTemplate（端口6379，数据库2）用于存储浏览器临时信任设备
     @Autowired
     @Qualifier("trustedBrowsersRedisTemplate")
     private RedisTemplate<String, Object> trustedBrowsersRedisTemplate;
@@ -492,7 +492,7 @@ public class TwoFactorAuthService {
     }
     
     /**
-     * 保存浏览器临时信任设备到Redis（端口6378）
+     * 保存浏览器临时信任设备到Redis（端口6379，数据库2）
      * Key格式: trusted_browser:{userId}:{deviceFingerprint}
      * TTL: 24小时
      */
@@ -524,7 +524,7 @@ public class TwoFactorAuthService {
     }
     
     /**
-     * 检查浏览器是否为信任设备（从Redis端口6378查询）
+     * 检查浏览器是否为信任设备（从Redis端口6379，数据库2查询）
      */
     public Boolean isBrowserTrusted(Long userId, String deviceFingerprint) {
         if (deviceFingerprint == null || deviceFingerprint.isEmpty()) {

@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 头像服务类
  * 处理用户头像的获取、设置和缓存管理
- * 使用独立的Redis实例（端口6380）存储头像数据
+ * 使用统一的Redis实例（端口6379，数据库1）存储头像数据
  */
 @Service
 public class AvatarService {
@@ -61,7 +61,7 @@ public class AvatarService {
             // 2. 构建Redis缓存key
             String cacheKey = AVATAR_CACHE_PREFIX + userId;
 
-            // 3. 尝试从Redis缓存获取头像（使用6380端口）
+            // 3. 尝试从Redis缓存获取头像（使用6379端口，数据库1）
             String cachedAvatar = profileRedisTemplate.opsForValue().get(cacheKey);
             if (cachedAvatar != null) {
                 logger.info("[获取头像] 缓存命中 - UserId: {}", userId);
@@ -96,7 +96,7 @@ public class AvatarService {
                 }
             }
 
-            // 5. 将头像URL存入Redis缓存（使用6380端口）
+            // 5. 将头像URL存入Redis缓存（使用6379端口，数据库1）
             if (avatarUrl != null) {
                 long expirationSeconds = getRemainingTokenExpiration(token);
                 if (expirationSeconds > 0) {

@@ -7,6 +7,9 @@ import io.lettuce.core.api.async.RedisAsyncCommands;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * 目录删除、恢复与彻底删除Redis配置类
@@ -79,5 +82,24 @@ public class DirectoRedisConfig {
     @Bean(name = "restoreRedisCommands")
     public RedisAsyncCommands<String, String> restoreRedisCommands() {
         return restoreRedisConnection().async();
+    }
+    
+    /**
+     * 创建回收站专用的StringRedisTemplate（用于限流器等场景）
+     * 使用6381端口的Redis实例，database 0
+     */
+    @Bean(name = "recycleStringRedisTemplate")
+    public StringRedisTemplate recycleStringRedisTemplate() {
+        RedisStandaloneConfiguration config = new RedisStandaloneConfiguration(host, port);
+        config.setDatabase(0);  // 删除操作使用database 0
+        
+        LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory(config);
+        connectionFactory.afterPropertiesSet();
+        
+        StringRedisTemplate template = new StringRedisTemplate();
+        template.setConnectionFactory(connectionFactory);
+        template.afterPropertiesSet();
+        
+        return template;
     }
 }

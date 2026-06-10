@@ -15,8 +15,8 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 /**
  * Redis配置类
  * 配置两个独立的Redis实例：
- * 1. rsaRedisTemplate - RSA临时缓存（端口6379）
- * 2. profileRedisTemplate - 个人资料缓存（端口6380）
+ * 1. rsaRedisTemplate - RSA临时缓存（端口6379，数据库0）
+ * 2. profileRedisTemplate - 个人资料缓存（端口6379，数据库1）
  */
 @Configuration
 public class RedisConfig {
@@ -27,14 +27,20 @@ public class RedisConfig {
     @Value("${spring.data.redis.port:6379}")
     private int rsaRedisPort;
 
+    @Value("${spring.data.redis.database:0}")
+    private int rsaRedisDatabase;
+
     @Value("${profile.redis.host:localhost}")
     private String profileRedisHost;
 
-    @Value("${profile.redis.port:6380}")
+    @Value("${profile.redis.port:6379}")
     private int profileRedisPort;
 
+    @Value("${profile.redis.database:1}")
+    private int profileRedisDatabase;
+
     /**
-     * RSA临时缓存的Redis连接工厂（端口6379）
+     * RSA临时缓存的Redis连接工厂（端口6379，数据库0）
      * 用于存储RSA密钥对等临时数据
      */
     @Bean(name = "rsaRedisConnectionFactory")
@@ -42,11 +48,12 @@ public class RedisConfig {
         RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
         config.setHostName(rsaRedisHost);
         config.setPort(rsaRedisPort);
+        config.setDatabase(rsaRedisDatabase);
         return new LettuceConnectionFactory(config);
     }
 
     /**
-     * 个人资料缓存的Redis连接工厂（端口6380）
+     * 个人资料缓存的Redis连接工厂（端口6379，数据库1）
      * 用于存储用户个人资料等数据
      */
     @Bean(name = "profileRedisConnectionFactory")
@@ -54,6 +61,7 @@ public class RedisConfig {
         RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
         config.setHostName(profileRedisHost);
         config.setPort(profileRedisPort);
+        config.setDatabase(profileRedisDatabase);
         return new LettuceConnectionFactory(config);
     }
 
@@ -69,7 +77,7 @@ public class RedisConfig {
     public RedisTemplate<String, Object> redisTemplate() {
         RedisTemplate<String, Object> template = new RedisTemplate<>();
 
-        // 设置连接工厂（使用6379端口）
+        // 设置连接工厂（使用6379端口，数据库0）
         template.setConnectionFactory(rsaRedisConnectionFactory());
 
         // 设置key的序列化器为String类型
@@ -102,7 +110,7 @@ public class RedisConfig {
     public RedisTemplate<String, String> profileRedisTemplate() {
         RedisTemplate<String, String> template = new RedisTemplate<>();
 
-        // 设置连接工厂（使用6380端口）
+        // 设置连接工厂（使用6379端口，数据库1）
         template.setConnectionFactory(profileRedisConnectionFactory());
 
         // 设置key的序列化器为String类型
@@ -125,10 +133,11 @@ public class RedisConfig {
     
     /**
      * StringRedisTemplate Bean（用于滑动窗口限流器等场景）
-     * 使用默认的 Redis 连接工厂（6379端口）
-     * StringRedisTemplate 是 RedisTemplate<String, String> 的便捷子类
+     * 注意：已废弃，限流器现在使用回收站Redis（6381端口）
+     * 保留此Bean仅为向后兼容
      */
     @Bean
+    @Deprecated
     public StringRedisTemplate stringRedisTemplate() {
         StringRedisTemplate template = new StringRedisTemplate();
         template.setConnectionFactory(rsaRedisConnectionFactory());

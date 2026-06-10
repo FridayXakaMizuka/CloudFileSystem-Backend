@@ -90,7 +90,7 @@ public class AuthController {
     @Autowired
     private com.mizuka.cloudfilesystem.util.JwtUtil jwtUtil;
     
-    // 注入个人资料RedisTemplate（端口6380）
+    // 注入个人资料RedisTemplate（端口6379，数据库1）
     @Autowired
     @Qualifier("profileRedisTemplate")
     private RedisTemplate<String, String> profileRedisTemplate;
@@ -866,7 +866,7 @@ public class AuthController {
                 );
             }
             
-            // 2. 从Redis获取会话信息（端口6378）
+            // 2. 从Redis获取会话信息（端口6379，数据库2）
             Map<String, Object> sessionData = twoFactorAuthService.getSessionData(sessionId, null);
             if (sessionData == null) {
                 logger.warn("[密保验证] 会话不存在或已过期 - SessionId: {}", sessionId);
@@ -949,7 +949,7 @@ public class AuthController {
                 );
             }
 
-            // 9. 如果是浏览器且验证成功，保存到Redis（端口6378）作为临时信任设备
+            // 9. 如果是浏览器且验证成功，保存到Redis（端口6379，数据库2）作为临时信任设备
             if ("browser".equalsIgnoreCase(clientType)) {
                 browserType = httpRequest.getHeader("X-Browser-Type");
                 twoFactorAuthService.saveBrowserTrustedDevice(
@@ -1103,7 +1103,7 @@ public class AuthController {
                 userId, nickname, userType, registeredAt, tokenExpiration, deviceFingerprint
             );
             
-            // 6. 如果是浏览器且验证成功，保存到Redis（端口6378）作为临时信任设备
+            // 6. 如果是浏览器且验证成功，保存到Redis（端口6379，数据库2）作为临时信任设备
             if ("browser".equalsIgnoreCase(clientType)) {
                 String browserType = httpRequest.getHeader("X-Browser-Type");
                 twoFactorAuthService.saveBrowserTrustedDevice(
@@ -1245,7 +1245,7 @@ public class AuthController {
                 userId, nickname, userType, registeredAt, tokenExpiration, deviceFingerprint
             );
             
-            // 6. 如果是浏览器且验证成功，保存到Redis（端口6378）作为临时信任设备
+            // 6. 如果是浏览器且验证成功，保存到Redis（端口6379，数据库2）作为临时信任设备
             if ("browser".equalsIgnoreCase(clientType)) {
                 String browserType = httpRequest.getHeader("X-Browser-Type");
                 twoFactorAuthService.saveBrowserTrustedDevice(

@@ -178,9 +178,20 @@ public interface FolderNodeMapper {
     
     /**
      * 更新文件夹信息（用于复用待分配文件夹）
+     * 注意：同时更新 parent_ids，使用 JSON_ARRAY_APPEND 追加父目录ID
+     * 修复：使用临时表避免 MySQL "You can't specify target table for update in FROM clause" 错误
      */
     @Update("UPDATE folder_nodes SET " +
             "parent_id = #{parentId}, " +
+            "parent_ids = (" +
+            "    SELECT new_parent_ids FROM (" +
+            "        SELECT CASE " +
+            "            WHEN p.parent_ids IS NULL THEN JSON_ARRAY(p.id) " +
+            "            ELSE JSON_ARRAY_APPEND(p.parent_ids, '$', p.id) " +
+            "        END AS new_parent_ids " +
+            "        FROM folder_nodes p WHERE p.id = #{parentId}" +
+            "    ) AS tmp" +
+            "), " +
             "user_id = #{userId}, " +
             "name = #{name}, " +
             "path = #{path}, " +
@@ -190,13 +201,23 @@ public interface FolderNodeMapper {
     
     /**
      * 插入新文件夹
+     * 注意：同时设置 parent_ids，使用 JSON_ARRAY_APPEND 追加父目录ID
+     * 修复：使用临时表避免 MySQL "You can't specify target table for update in FROM clause" 错误
      */
     @Insert("INSERT INTO folder_nodes (" +
-            "parent_id, user_id, name, path, level, sort_order, is_hidden, " +
+            "parent_id, parent_ids, user_id, name, path, level, is_hidden, " +
             "is_deleted, deleted_at, delete_expires_at, directory_status, " +
             "created_at, updated_at" +
             ") VALUES (" +
-            "#{parentId}, #{userId}, #{name}, #{path}, #{level}, #{sortOrder}, #{isHidden}, " +
+            "#{parentId}, " +
+            "(SELECT new_parent_ids FROM (" +
+            "    SELECT CASE " +
+            "        WHEN p.parent_ids IS NULL THEN JSON_ARRAY(p.id) " +
+            "        ELSE JSON_ARRAY_APPEND(p.parent_ids, '$', p.id) " +
+            "    END AS new_parent_ids " +
+            "    FROM folder_nodes p WHERE p.id = #{parentId}" +
+            ") AS tmp), " +
+            "#{userId}, #{name}, #{path}, #{level}, #{isHidden}, " +
             "#{isDeleted}, #{deletedAt}, #{deleteExpiresAt}, #{directoryStatus}, " +
             "#{createdAt}, #{updatedAt}" +
             ")")
@@ -217,12 +238,27 @@ public interface FolderNodeMapper {
     
     /**
      * 移动文件夹
+     * 注意：同时更新 parent_ids，使用 JSON_ARRAY_APPEND 重新构建路径
+     * 修复：使用临时表避免 MySQL "You can't specify target table for update in FROM clause" 错误
      * 
      * @param id 文件夹ID
      * @param newParentId 新父节点ID
      * @param newPath 新路径
      */
-    @Update("UPDATE folder_nodes SET parent_id = #{newParentId}, path = #{newPath}, updated_at = NOW() WHERE id = #{id}")
+    @Update("UPDATE folder_nodes SET " +
+            "parent_id = #{newParentId}, " +
+            "parent_ids = (" +
+            "    SELECT new_parent_ids FROM (" +
+            "        SELECT CASE " +
+            "            WHEN p.parent_ids IS NULL THEN JSON_ARRAY(p.id) " +
+            "            ELSE JSON_ARRAY_APPEND(p.parent_ids, '$', p.id) " +
+            "        END AS new_parent_ids " +
+            "        FROM folder_nodes p WHERE p.id = #{newParentId}" +
+            "    ) AS tmp" +
+            "), " +
+            "path = #{newPath}, " +
+            "updated_at = NOW() " +
+            "WHERE id = #{id}")
     void moveFolder(@Param("id") Long id,
                     @Param("newParentId") Long newParentId,
                     @Param("newPath") String newPath);
@@ -290,6 +326,8 @@ public interface FolderNodeMapper {
     
     /**
      * 恢复文件夹
+     * 注意：同时重新构建 parent_ids，使用 JSON_ARRAY_APPEND 追加父目录ID
+     * 修复：使用临时表避免 MySQL "You can't specify target table for update in FROM clause" 错误
      */
     @Update("UPDATE folder_nodes SET " +
             "directory_status = 'active', " +
@@ -297,9 +335,16 @@ public interface FolderNodeMapper {
             "deleted_at = NULL, " +
             "delete_expires_at = NULL, " +
             "parent_id = #{parentId}, " +
+            "parent_ids = (" +
+            "    SELECT new_parent_ids FROM (" +
+            "        SELECT CASE " +
+            "            WHEN p.parent_ids IS NULL THEN JSON_ARRAY(p.id) " +
+            "            ELSE JSON_ARRAY_APPEND(p.parent_ids, '$', p.id) " +
+            "        END AS new_parent_ids " +
+            "        FROM folder_nodes p WHERE p.id = #{parentId}" +
+            "    ) AS tmp" +
+            "), " +
             "path = #{path}, " +
-            "original_parent_id = NULL, " +
-            "original_path = NULL, " +
             "updated_at = NOW() " +
             "WHERE id = #{id}")
     void restoreFolder(@Param("id") Long id,
@@ -339,25 +384,6 @@ public interface FolderNodeMapper {
             "ORDER BY id ASC")
     List<FolderNode> findChildrenInRecycleBin(@Param("parentId") Long parentId);
     
-    /**
-     * 标记文件夹为待分配状态（进入待分配池）
-     * 注意：path 字段设置为空字符串而不是 NULL，以避免数据库约束错误
-     */
-    @Update("UPDATE folder_nodes SET " +
-            "directory_status = 'unassigned', " +
-            "user_id = NULL, " +
-            "parent_id = NULL, " +
-            "path = '', " +
-            "is_deleted = 0, " +
-            "deleted_at = NULL, " +
-            "delete_expires_at = NULL, " +
-            "original_parent_id = NULL, " +
-            "original_path = NULL, " +
-            "unassigned_at = NOW(), " +
-            "updated_at = NOW() " +
-            "WHERE id = #{id}")
-    void markAsUnassigned(@Param("id") Long id);
-
     /**
      * 搜索文件夹（基础版本，无分页）
      */
@@ -461,6 +487,14 @@ public interface FolderNodeMapper {
     void updateLastDelUuid(@Param("id") Long id, @Param("batchId") String batchId);
     
     /**
+     * 标记文件夹为待分配（彻底删除）
+     */
+    @Update("UPDATE folder_nodes SET directory_status = 'unassigned', " +
+            "last_del_uuid = NULL, deleted_at = NULL, delete_expires_at = NULL, " +
+            "version = version + 1 WHERE id = #{nodeId}")
+    int markAsUnassigned(@Param("nodeId") Long nodeId);
+    
+    /**
      * 检查指定父目录下是否存在同名文件夹（不考虑删除状态）
      */
     @Select("SELECT COUNT(*) > 0 FROM folder_nodes " +
@@ -479,4 +513,43 @@ public interface FolderNodeMapper {
             "AND directory_status = 'active' " +
             "LIMIT 1")
     FolderNode findUserRoot(@Param("userId") Long userId);
+    
+    /**
+     * 根据条件查询子文件夹（用于恢复操作）
+     * 条件：directory_status = 'active' OR 
+     *       (directory_status = 'in_recycle_bin' AND 
+     *        (last_del_uuid = batchId OR last_del_uuid IS NULL))
+     */
+    @Select("SELECT * FROM folder_nodes WHERE parent_id = #{parentId} AND (" +
+            "  directory_status = 'active' OR " +
+            "  (directory_status = 'in_recycle_bin' AND " +
+            "   (last_del_uuid = #{batchId} OR last_del_uuid IS NULL))" +
+            ") ORDER BY id ASC")
+    List<FolderNode> findChildrenByConditions(@Param("parentId") Long parentId,
+                                              @Param("batchId") String batchId);
+    
+    /**
+     * 标记文件夹为回收站状态（用于彻底删除时的 BFS 遍历）
+     */
+    @Update("UPDATE folder_nodes SET " +
+            "directory_status = 'in_recycle_bin', " +
+            "last_del_uuid = #{batchId}, " +
+            "version = version + 1 " +
+            "WHERE id = #{id}")
+    void markAsInRecycleBin(@Param("id") Long id, @Param("batchId") String batchId);
+    
+    /**
+     * 清空文件夹信息（保留 id 和 directory_status）
+     * 注意：彻底删除时清空 parent_ids
+     */
+    @Update("UPDATE folder_nodes SET " +
+            "name = NULL, path = NULL, parent_id = NULL, user_id = NULL, " +
+            "parent_ids = NULL, " +
+            "level = 0, is_hidden = 0, is_deleted = 0, " +
+            "deleted_at = NULL, delete_expires_at = NULL, " +
+            "last_del_uuid = NULL, file_count = 0, folder_count = 0, " +
+            "total_size = 0, directory_status = 'unassigned', " +
+            "unassigned_at = NOW(), version = version + 1 " +
+            "WHERE id = #{id}")
+    void clearFolderInfo(@Param("id") Long id);
 }

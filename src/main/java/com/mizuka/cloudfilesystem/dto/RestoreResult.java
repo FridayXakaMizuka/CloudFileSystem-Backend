@@ -30,4 +30,12 @@ public class RestoreResult {
      * 数据
      */
     private RestoreData data;
+    
+    /**
+     * 简化构造函数（新架构使用）
+     */
+    public RestoreResult(Boolean success, String message) {
+        this.success = success;
+        this.message = message;
+    }
 }

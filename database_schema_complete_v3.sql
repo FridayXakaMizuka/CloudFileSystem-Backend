@@ -4,7 +4,7 @@
 -- 端口: 3306
 -- 字符集: utf8mb4
 -- 生成时间: 2026-06-05
--- 说明: 
+-- 说明:
 --   1. 采用文件夹节点表和文件节点表分离的设计
 --   2. 支持回收站、待分配目录池、软删除机制
 --   3. 新增 version 字段用于乐观锁并发控制
@@ -302,16 +302,16 @@ CREATE TABLE IF NOT EXISTS upload_tasks (
 -- ============================================
 CREATE TABLE folder_nodes (
                               id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '文件夹ID',
-                              parent_id BIGINT DEFAULT NULL COMMENT '父文件夹ID，NULL表示根目录',
-                              user_id BIGINT DEFAULT NULL COMMENT '所属用户ID，NULL表示系统/管理员目录',
+                              parent_id BIGINT DEFAULT NULL COMMENT '父文件夹ID，NULL表示根目录或待分配状态',
+                              parent_ids JSON DEFAULT NULL COMMENT '父文件夹ID路径数组，如 [1,2,3]，待分配状态时为NULL',
+                              user_id BIGINT DEFAULT NULL COMMENT '所属用户ID，NULL表示系统/管理员目录或待分配状态',
 
     -- 基本信息
-                              name VARCHAR(255) NOT NULL COMMENT '文件夹名称',
-                              path VARCHAR(1000) NOT NULL COMMENT '完整路径，如 _root/_files/10001/documents',
+                              name VARCHAR(255) DEFAULT NULL COMMENT '文件夹名称，待分配状态时为NULL',
+                              path VARCHAR(1000) DEFAULT NULL COMMENT '完整路径（已废弃，未来改用 parent_ids + Redis）',
                               level INT DEFAULT 0 COMMENT '层级深度，根目录为0',
 
     -- 排序和显示
-                              sort_order INT DEFAULT 0 COMMENT '同级节点排序顺序',
                               is_hidden TINYINT(1) DEFAULT 0 COMMENT '是否隐藏',
 
     -- 软删除支持
@@ -322,10 +322,6 @@ CREATE TABLE folder_nodes (
     -- 目录状态（用于回收站）
                               directory_status ENUM('active', 'in_recycle_bin', 'unassigned', 'deleting', 'restoring') DEFAULT 'active' COMMENT '目录状态：活跃/回收站中/待分配/删除中/恢复中',
                               unassigned_at DATETIME DEFAULT NULL COMMENT '进入待分配池的时间',
-
-    -- 原始位置信息（用于恢复）
-                              original_parent_id BIGINT DEFAULT NULL COMMENT '原始父文件夹ID（删除时记录，用于恢复）',
-                              original_path VARCHAR(1000) DEFAULT NULL COMMENT '原始完整路径（删除时记录，用于恢复）',
 
     -- 最后删除/恢复批次号（用于追踪异步操作）
                               last_del_uuid VARCHAR(36) DEFAULT NULL COMMENT '最后删除/恢复批次号（UUID格式）',
@@ -345,7 +341,7 @@ CREATE TABLE folder_nodes (
     -- 索引
                               INDEX idx_parent_id (parent_id),
                               INDEX idx_user_id (user_id),
-                              INDEX idx_path (path(255)),
+    -- INDEX idx_path (path(255)),
                               INDEX idx_is_deleted (is_deleted),
                               INDEX idx_directory_status (directory_status),
                               INDEX idx_delete_expires_at (delete_expires_at),
@@ -362,13 +358,13 @@ CREATE TABLE folder_nodes (
 -- ============================================
 CREATE TABLE file_nodes (
                             id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '文件节点ID',
-                            folder_id BIGINT NOT NULL COMMENT '所属文件夹ID',
-                            user_id BIGINT DEFAULT NULL COMMENT '所属用户ID，NULL表示系统文件',
-                            file_metadata_id BIGINT NOT NULL COMMENT '关联文件元数据ID',
+                            folder_id BIGINT DEFAULT NULL COMMENT '所属文件夹ID，NULL表示待分配状态',
+                            user_id BIGINT DEFAULT NULL COMMENT '所属用户ID，NULL表示系统文件或待分配状态',
+                            file_metadata_id BIGINT DEFAULT NULL COMMENT '关联文件元数据ID，NULL表示待分配状态',
 
     -- 基本信息
-                            name VARCHAR(255) NOT NULL COMMENT '显示文件名',
-                            path VARCHAR(1000) NOT NULL COMMENT '完整路径，如 _root/_files/10001/documents/file.pdf',
+                            name VARCHAR(255) DEFAULT NULL COMMENT '显示文件名，待分配状态时为NULL',
+                            path VARCHAR(1000) DEFAULT NULL COMMENT '完整路径（已废弃，未来改用 folder_id + Redis）',
 
     -- 文件信息（冗余存储，提升查询性能）
                             file_size BIGINT NOT NULL DEFAULT 0 COMMENT '文件大小（字节）',
@@ -376,7 +372,6 @@ CREATE TABLE file_nodes (
                             extension VARCHAR(20) DEFAULT NULL COMMENT '文件扩展名',
 
     -- 排序和显示
-                            sort_order INT DEFAULT 0 COMMENT '同级节点排序顺序',
                             is_hidden TINYINT(1) DEFAULT 0 COMMENT '是否隐藏',
 
     -- 软删除支持
@@ -386,10 +381,6 @@ CREATE TABLE file_nodes (
 
     -- 目录状态（用于回收站）
                             directory_status ENUM('active', 'in_recycle_bin', 'permanently_deleted', 'deleting', 'restoring') DEFAULT 'active' COMMENT '文件状态：活跃/回收站中/已彻底删除/删除中/恢复中',
-
-    -- 原始位置信息（用于恢复）
-                            original_folder_id BIGINT DEFAULT NULL COMMENT '原始所属文件夹ID（删除时记录，用于恢复）',
-                            original_path VARCHAR(1000) DEFAULT NULL COMMENT '原始完整路径（删除时记录，用于恢复）',
 
     -- 最后删除/恢复批次号（用于追踪异步操作）
                             last_del_uuid VARCHAR(36) DEFAULT NULL COMMENT '最后删除/恢复批次号（UUID格式）',
@@ -405,7 +396,7 @@ CREATE TABLE file_nodes (
                             INDEX idx_folder_id (folder_id),
                             INDEX idx_user_id (user_id),
                             INDEX idx_file_metadata_id (file_metadata_id),
-                            INDEX idx_path (path(255)),
+    -- INDEX idx_path (path(255)),
                             INDEX idx_is_deleted (is_deleted),
                             INDEX idx_directory_status (directory_status),
                             INDEX idx_delete_expires_at (delete_expires_at),
@@ -458,13 +449,13 @@ CREATE TABLE recycle_bin_tasks (
                                    root_node_id BIGINT NOT NULL COMMENT '根节点ID（文件夹或文件）',
                                    node_type TINYINT NOT NULL COMMENT '节点类型：0=文件夹，1=文件',
                                    operation_type TINYINT NOT NULL COMMENT '操作类型：0=删除，1=恢复，2=彻底删除',
-                                   total_count INT DEFAULT 0 COMMENT '总节点数（异步扫描后更新）',
-                                   processed_count INT DEFAULT 0 COMMENT '已处理节点数',
+                                   total_count INT DEFAULT 0 COMMENT '总节点数（始终为1，因为只处理根节点）',
+                                   processed_count INT DEFAULT 0 COMMENT '已处理节点数（始终为1）',
                                    status TINYINT NOT NULL DEFAULT 0 COMMENT '状态：0=进行中，1=已完成，2=失败，3=已终止',
                                    error_message TEXT COMMENT '错误信息',
                                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                    completed_at DATETIME DEFAULT NULL COMMENT '完成时间',
-                                   
+
                                    INDEX idx_batch_id (batch_id),
                                    INDEX idx_user_status (user_id, status),
                                    INDEX idx_created_at (created_at)
@@ -510,42 +501,52 @@ INSERT INTO users (id, nickname, password, avatar, email, phone, storage_quota, 
 
 
 -- 插入根节点（管理员专属，以_开头，无前导斜杠）
-INSERT INTO folder_nodes (id, parent_id, user_id, name, path, level, sort_order, version) VALUES
-    (1, NULL, NULL, '_root', '_root', 0, 0, 0);
+-- 注意：根目录 _root 的 parent_ids 为 NULL
+INSERT INTO folder_nodes (id, parent_id, parent_ids, user_id, name, path, level, version) VALUES
+    (1, NULL, NULL, NULL, '_root', '_root', 0, 0);
+
+-- 【关键】重置 AUTO_INCREMENT 计数器，避免 ID 跳跃
+-- 说明：手动插入 id=1 后，AUTO_INCREMENT 仍为 1，下一条记录会从 2 开始
+ALTER TABLE folder_nodes AUTO_INCREMENT = 2;
 
 -- 插入管理员专属子目录（均以_开头）
-INSERT INTO folder_nodes (parent_id, user_id, name, path, level, sort_order, version) VALUES
-                                                                                          (1, NULL, '_avatar', '_root/_avatar', 1, 0, 0),
-                                                                                          (1, NULL, '_backup', '_root/_backup', 1, 1, 0),
-                                                                                          (1, NULL, '_system', '_root/_system', 1, 2, 0),
-                                                                                          (1, NULL, '_recycle_bin', '_root/_recycle_bin', 1, 3, 0),
-                                                                                          (1, NULL, '_files', '_root/_files', 1, 4, 0);
+-- 注意：_recycle_bin 目录已废弃，回收站功能改用 recycle_bin_tasks 表和 Redis 索引管理
+-- parent_ids: 父目录是 _root (id=1)，所以 parent_ids = [1]
+INSERT INTO folder_nodes (parent_id, parent_ids, user_id, name, path, level, version) VALUES
+                                                                                          (1, JSON_ARRAY(1), NULL, '_avatar', '_root/_avatar', 1, 0),
+                                                                                          (1, JSON_ARRAY(1), NULL, '_backup', '_root/_backup', 1, 0),
+                                                                                          (1, JSON_ARRAY(1), NULL, '_system', '_root/_system', 1, 0),
+                                                                                          (1, JSON_ARRAY(1), NULL, '_files', '_root/_files', 1, 0);
 
 -- 为现有用户创建根目录（在 _files 下按用户ID分配）
-INSERT INTO folder_nodes (parent_id, user_id, name, path, level, sort_order, version)
+-- parent_ids: 父目录是 _files，使用 JSON_ARRAY_APPEND 追加父目录ID
+INSERT INTO folder_nodes (parent_id, parent_ids, user_id, name, path, level, version)
 SELECT
-    (SELECT id FROM folder_nodes WHERE path = '_root/_files'),
+    fn.id AS parent_id,
+    CASE
+        WHEN fn.parent_ids IS NULL THEN JSON_ARRAY(fn.id)
+        ELSE JSON_ARRAY_APPEND(fn.parent_ids, '$', fn.id)
+        END AS parent_ids,
     u.id,
     CAST(u.id AS CHAR),
     CONCAT('_root/_files/', u.id),
     2,
-    0,
     0
-FROM users u
-WHERE u.id >= 10001;
+FROM folder_nodes fn, users u
+WHERE fn.path = '_root/_files'
+  AND u.id >= 10001;
 
--- 为现有用户在回收站中创建隔离目录（直接在 _recycle_bin 下按用户ID分配）
-INSERT INTO folder_nodes (parent_id, user_id, name, path, level, sort_order, version)
-SELECT
-    (SELECT id FROM folder_nodes WHERE path = '_root/_recycle_bin'),
-    u.id,
-    CAST(u.id AS CHAR),
-    CONCAT('_root/_recycle_bin/', u.id),
-    2,
-    0,
-    0
-FROM users u
-WHERE u.id >= 10001;
+-- 【关键】再次重置 AUTO_INCREMENT 计数器，避免 ID 跳跃
+-- 说明：批量 INSERT...SELECT 后，MySQL 内部计数器可能已跳跃，需要重新校准
+SELECT @max_folder_id := MAX(id) FROM folder_nodes;
+SET @next_id = @max_folder_id + 1;
+SET @sql = CONCAT('ALTER TABLE folder_nodes AUTO_INCREMENT = ', @next_id);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 注意：回收站用户隔离目录已废弃
+-- 回收站功能现在通过 recycle_bin_tasks 表和 Redis 索引管理，不再需要在 _recycle_bin 下创建用户隔离目录
 
 -- 插入头像文件元数据（确保头像可以下载）
 INSERT INTO file_metadata (user_id, file_hash, original_filename, stored_filename, file_size, mime_type, extension, storage_path, storage_type, upload_status, is_public, download_count, reference_count, uploaded_at, created_at, updated_at, version) VALUES
@@ -554,7 +555,7 @@ INSERT INTO file_metadata (user_id, file_hash, original_filename, stored_filenam
                                                                                                                                                                                                                                                              (10004, '570FBA77FED53ADCCAFD9279377E40C2', 'avatar.png', '10030ce0-b780-4c07-9299-2201c4e42d6b_570FBA77FED53ADCCAFD9279377E40C2.png', 125800, 'image/png', 'png', '/_root/_avatar/10030ce0-b780-4c07-9299-2201c4e42d6b_570FBA77FED53ADCCAFD9279377E40C2.png', 'local', 'completed', 0, 0, 1, '2026-05-03 20:43:10', '2026-05-03 20:43:10', '2026-05-03 20:43:10', 0);
 
 -- 为头像文件创建文件节点（存储在 _avatar 目录下）
-INSERT INTO file_nodes (folder_id, user_id, file_metadata_id, name, path, file_size, mime_type, extension, sort_order, directory_status, version)
+INSERT INTO file_nodes (folder_id, user_id, file_metadata_id, name, path, file_size, mime_type, extension, directory_status, version)
 SELECT
     (SELECT id FROM folder_nodes WHERE path = '_root/_avatar'),
     fm.user_id,
@@ -564,7 +565,6 @@ SELECT
     fm.file_size,
     fm.mime_type,
     fm.extension,
-    0,
     'active',
     0
 FROM file_metadata fm
@@ -608,18 +608,14 @@ SELECT * FROM folder_nodes
 WHERE directory_status = 'unassigned'
 ORDER BY unassigned_at ASC;
 
--- 回收站文件详细信息视图（包含原始位置信息）
+-- 回收站文件详细信息视图
 CREATE OR REPLACE VIEW v_recycle_bin_files_detail AS
 SELECT
     fn.*,
     fm.original_filename,
     fm.storage_path,
     fm.file_hash,
-    DATEDIFF(fn.delete_expires_at, NOW()) AS days_remaining,
-    CASE
-        WHEN fn.original_folder_id IS NOT NULL THEN '可恢复至原位置'
-        ELSE '将恢复至用户根目录'
-        END AS restore_info
+    DATEDIFF(fn.delete_expires_at, NOW()) AS days_remaining
 FROM file_nodes fn
          JOIN file_metadata fm ON fn.file_metadata_id = fm.id
 WHERE fn.directory_status = 'in_recycle_bin'
@@ -651,10 +647,12 @@ BEGIN
         END IF;
 
         -- 标记为待分配状态（逻辑概念，不移动物理位置），带乐观锁
+        -- 彻底删除时清空 parent_ids
         UPDATE folder_nodes
         SET directory_status = 'unassigned',
             unassigned_at = NOW(),
             user_id = NULL,
+            parent_ids = NULL,
             is_deleted = 0,
             deleted_at = NULL,
             delete_expires_at = NULL,
@@ -845,155 +843,86 @@ END$$
 DELIMITER ;
 
 -- 恢复回收站中的文件（根据原始位置恢复，支持乐观锁）
+-- 注意：此存储过程已废弃，因为 original_folder_id 和 original_path 字段已被删除
+-- 新的恢复逻辑应该使用当前的 folder_id 和通过 parent_ids 动态生成的路径
 DELIMITER $$
 CREATE PROCEDURE sp_restore_file_from_recycle_bin(
     IN p_node_id BIGINT,
     IN p_user_id BIGINT
 )
 BEGIN
-    DECLARE v_original_folder_id BIGINT;
-    DECLARE v_original_path VARCHAR(1000);
-    DECLARE v_folder_exists INT;
-    DECLARE v_new_path VARCHAR(1000);
-    DECLARE v_folder_name VARCHAR(255);
     DECLARE v_current_version BIGINT;
+    DECLARE v_folder_id BIGINT;
 
-    -- 获取文件节点的原始位置信息和当前版本号
-    SELECT original_folder_id, original_path, version
-    INTO v_original_folder_id, v_original_path, v_current_version
+    -- 获取文件节点的当前版本号和 folder_id
+    SELECT folder_id, version
+    INTO v_folder_id, v_current_version
     FROM file_nodes
     WHERE id = p_node_id AND user_id = p_user_id;
 
     -- 检查节点是否存在
-    IF v_original_folder_id IS NULL THEN
+    IF v_folder_id IS NULL THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = '文件节点不存在或无权限';
     END IF;
 
-    -- 检查原始文件夹是否仍然存在
-    SELECT COUNT(*) INTO v_folder_exists
-    FROM folder_nodes
-    WHERE id = v_original_folder_id AND is_deleted = 0;
-
-    IF v_folder_exists > 0 THEN
-        -- 原始文件夹存在，恢复到原位置
-        SET v_new_path = v_original_path;
-
-        UPDATE file_nodes
-        SET directory_status = 'active',
-            is_deleted = 0,
-            deleted_at = NULL,
-            delete_expires_at = NULL,
-            folder_id = v_original_folder_id,
-            path = v_new_path,
-            original_folder_id = NULL,
-            original_path = NULL,
-            version = version + 1,
-            updated_at = NOW()
-        WHERE id = p_node_id AND version = v_current_version;
-
-    ELSE
-        -- 原始文件夹已删除，恢复到用户根目录
-        SELECT id INTO v_original_folder_id
-        FROM folder_nodes
-        WHERE user_id = p_user_id
-          AND parent_id = (SELECT id FROM folder_nodes WHERE path = '_root/_files')
-        LIMIT 1;
-
-        SET v_folder_name = SUBSTRING_INDEX(v_original_path, '/', -1);
-        SET v_new_path = CONCAT('_root/_files/', p_user_id, '/', v_folder_name);
-
-        UPDATE file_nodes
-        SET directory_status = 'active',
-            is_deleted = 0,
-            deleted_at = NULL,
-            delete_expires_at = NULL,
-            folder_id = v_original_folder_id,
-            path = v_new_path,
-            original_folder_id = NULL,
-            original_path = NULL,
-            version = version + 1,
-            updated_at = NOW()
-        WHERE id = p_node_id AND version = v_current_version;
-
-    END IF;
+    -- 恢复到活跃状态（保持原有 folder_id）
+    UPDATE file_nodes
+    SET directory_status = 'active',
+        is_deleted = 0,
+        deleted_at = NULL,
+        delete_expires_at = NULL,
+        version = version + 1,
+        updated_at = NOW()
+    WHERE id = p_node_id AND version = v_current_version;
 
 END$$
 DELIMITER ;
 
 -- 恢复回收站中的文件夹（根据原始位置恢复，支持乐观锁）
+-- 注意：此存储过程已废弃，因为 original_parent_id 和 original_path 字段已被删除
+-- 新的恢复逻辑应该使用当前的 parent_id 和通过 parent_ids 动态生成的路径
 DELIMITER $$
 CREATE PROCEDURE sp_restore_folder_from_recycle_bin(
     IN p_node_id BIGINT,
     IN p_user_id BIGINT
 )
 BEGIN
-    DECLARE v_original_parent_id BIGINT;
-    DECLARE v_original_path VARCHAR(1000);
-    DECLARE v_parent_exists INT;
-    DECLARE v_new_path VARCHAR(1000);
-    DECLARE v_folder_name VARCHAR(255);
     DECLARE v_current_version BIGINT;
+    DECLARE v_parent_id BIGINT;
 
-    -- 获取文件夹的原始位置信息和当前版本号
-    SELECT original_parent_id, original_path, version
-    INTO v_original_parent_id, v_original_path, v_current_version
+    -- 获取文件夹的当前版本号和 parent_id
+    SELECT parent_id, version
+    INTO v_parent_id, v_current_version
     FROM folder_nodes
     WHERE id = p_node_id AND user_id = p_user_id;
 
     -- 检查节点是否存在
-    IF v_original_parent_id IS NULL THEN
+    IF v_parent_id IS NULL THEN
         SIGNAL SQLSTATE '45000'
             SET MESSAGE_TEXT = '文件夹节点不存在或无权限';
     END IF;
 
-    -- 检查原始父文件夹是否仍然存在
-    SELECT COUNT(*) INTO v_parent_exists
-    FROM folder_nodes
-    WHERE id = v_original_parent_id AND is_deleted = 0;
-
-    IF v_parent_exists > 0 THEN
-        -- 原始父文件夹存在，恢复到原位置
-        SET v_new_path = v_original_path;
-
-        UPDATE folder_nodes
-        SET directory_status = 'active',
-            is_deleted = 0,
-            deleted_at = NULL,
-            delete_expires_at = NULL,
-            parent_id = v_original_parent_id,
-            path = v_new_path,
-            original_parent_id = NULL,
-            original_path = NULL,
-            version = version + 1,
-            updated_at = NOW()
-        WHERE id = p_node_id AND version = v_current_version;
-
-    ELSE
-        -- 原始父文件夹已删除，恢复到用户根目录
-        SELECT id INTO v_original_parent_id
-        FROM folder_nodes
-        WHERE user_id = p_user_id
-          AND parent_id = (SELECT id FROM folder_nodes WHERE path = '_root/_files')
-        LIMIT 1;
-
-        SET v_folder_name = SUBSTRING_INDEX(v_original_path, '/', -1);
-        SET v_new_path = CONCAT('_root/_files/', p_user_id, '/', v_folder_name);
-
-        UPDATE folder_nodes
-        SET directory_status = 'active',
-            is_deleted = 0,
-            deleted_at = NULL,
-            delete_expires_at = NULL,
-            parent_id = v_original_parent_id,
-            path = v_new_path,
-            original_parent_id = NULL,
-            original_path = NULL,
-            version = version + 1,
-            updated_at = NOW()
-        WHERE id = p_node_id AND version = v_current_version;
-
-    END IF;
+    -- 重新构建 parent_ids：查询父目录的 parent_ids，然后追加父目录ID
+    -- 修复：使用临时表避免 MySQL "You can't specify target table for update in FROM clause" 错误
+    UPDATE folder_nodes
+    SET directory_status = 'active',
+        is_deleted = 0,
+        deleted_at = NULL,
+        delete_expires_at = NULL,
+        parent_ids = (
+            SELECT new_parent_ids FROM (
+                                           SELECT CASE
+                                                      WHEN p.parent_ids IS NULL THEN JSON_ARRAY(p.id)
+                                                      ELSE JSON_ARRAY_APPEND(p.parent_ids, '$', p.id)
+                                                      END AS new_parent_ids
+                                           FROM folder_nodes p
+                                           WHERE p.id = v_parent_id
+                                       ) AS tmp
+        ),
+        version = version + 1,
+        updated_at = NOW()
+    WHERE id = p_node_id AND version = v_current_version;
 
 END$$
 DELIMITER ;
@@ -1069,30 +998,42 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- 8. folder_nodes - 文件夹节点表（支持乐观锁）
 -- 9. file_nodes - 文件节点表（支持乐观锁）
 -- 10. file_chunks - 文件分片表
--- 11. directory_permissions - 目录权限表
+-- 11. recycle_bin_tasks - 回收站任务表（新架构，取代 _recycle_bin 目录）
+-- 12. directory_permissions - 目录权限表
 --
 -- 已创建以下视图：
 -- - v_active_folders - 活跃文件夹视图
 -- - v_active_files - 活跃文件视图
--- - v_recycle_bin_folders - 回收站文件夹视图
--- - v_recycle_bin_files - 回收站文件视图
+-- - v_recycle_bin_folders - 回收站文件夹视图（基于 directory_status = 'in_recycle_bin'）
+-- - v_recycle_bin_files - 回收站文件视图（基于 directory_status = 'in_recycle_bin'）
 -- - v_unassigned_pool - 待分配目录池视图
 -- - v_recycle_bin_files_detail - 回收站文件详情视图
 --
 -- 已创建以下存储过程：
--- - sp_cleanup_expired_recycle_bin_folders - 清理过期回收站文件夹
--- - sp_cleanup_expired_recycle_bin_files - 清理过期回收站文件
--- - sp_cleanup_permanently_deleted_files - 清理永久删除的文件
+-- - sp_cleanup_expired_recycle_bin_folders - 清理过期回收站文件夹（标记为 unassigned）
+-- - sp_cleanup_expired_recycle_bin_files - 清理过期回收站文件（标记为 permanently_deleted）
+-- - sp_cleanup_permanently_deleted_files - 清理永久删除的文件节点和元数据
 -- - sp_admin_force_delete_file_node - 管理员强制删除文件节点
 -- - sp_admin_force_delete_folder_node - 管理员强制删除文件夹节点
--- - sp_restore_file_from_recycle_bin - 恢复回收站文件
--- - sp_restore_folder_from_recycle_bin - 恢复回收站文件夹
+-- - sp_restore_file_from_recycle_bin - 恢复回收站文件（带乐观锁）
+-- - sp_restore_folder_from_recycle_bin - 恢复回收站文件夹（带乐观锁）
 --
 -- 已创建以下触发器：
 -- - tr_before_update_folder_nodes - 文件夹更新前触发器
 -- - tr_before_update_file_nodes - 文件节点更新前触发器
--- - tr_after_insert_file_nodes - 文件节点插入后触发器
--- - tr_before_delete_file_nodes - 文件节点删除前触发器
+-- - tr_after_insert_file_nodes - 文件节点插入后触发器（增加引用计数）
+-- - tr_before_delete_file_nodes - 文件节点删除前触发器（减少引用计数）
+--
+-- 重要说明：
+-- 1. 回收站功能已重构，不再使用 _recycle_bin 目录进行物理隔离
+-- 2. 回收站现在通过 recycle_bin_tasks 表和 Redis 索引管理
+-- 3. 节点状态通过 directory_status 字段标识：
+--    - 'active': 活跃状态
+--    - 'in_recycle_bin': 在回收站中（软删除）
+--    - 'unassigned': 待分配状态（彻底删除后的逻辑标记）
+--    - 'permanently_deleted': 已彻底删除（文件专用）
+--    - 'deleting': 删除中（异步操作）
+--    - 'restoring': 恢复中（异步操作）
 
 -- 数据统计：
 SELECT COUNT(*) AS total_users FROM users;

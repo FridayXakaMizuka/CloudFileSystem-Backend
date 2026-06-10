@@ -43,6 +43,20 @@ public interface RecycleBinTaskMapper {
                     @Param("totalCount") Integer totalCount);
     
     /**
+     * 更新任务操作类型和状态（用于从删除切换到恢复）
+     */
+    @Update("UPDATE recycle_bin_tasks SET operation_type = #{operationType}, status = #{status}, " +
+            "error_message = #{errorMessage}, processed_count = #{processedCount}, " +
+            "total_count = #{totalCount}, completed_at = #{completedAt} WHERE batch_id = #{batchId}")
+    void updateTaskOperationType(@Param("batchId") String batchId,
+                                  @Param("operationType") Integer operationType,
+                                  @Param("status") Integer status,
+                                  @Param("errorMessage") String errorMessage,
+                                  @Param("processedCount") Integer processedCount,
+                                  @Param("totalCount") Integer totalCount,
+                                  @Param("completedAt") LocalDateTime completedAt);
+    
+    /**
      * 更新进度
      */
     @Update("UPDATE recycle_bin_tasks SET processed_count = #{processedCount}, " +
@@ -50,6 +64,20 @@ public interface RecycleBinTaskMapper {
     void updateProgress(@Param("batchId") String batchId,
                         @Param("processedCount") Integer processedCount,
                         @Param("totalCount") Integer totalCount);
+    
+    /**
+     * 仅更新任务状态
+     */
+    @Update("UPDATE recycle_bin_tasks SET status = #{status} WHERE batch_id = #{batchId}")
+    void updateTaskStatus(@Param("batchId") String batchId,
+                          @Param("status") Integer status);
+    
+    /**
+     * 仅更新操作类型
+     */
+    @Update("UPDATE recycle_bin_tasks SET operation_type = #{operationType} WHERE batch_id = #{batchId}")
+    void updateOperationType(@Param("batchId") String batchId,
+                             @Param("operationType") Integer operationType);
     
     /**
      * 查询用户的删除任务列表（用于浏览回收站）
@@ -71,5 +99,36 @@ public interface RecycleBinTaskMapper {
      */
     @Select("SELECT * FROM recycle_bin_tasks WHERE user_id = #{userId} AND operation_type = 1 AND status = 0 ORDER BY created_at ASC")
     List<RecycleBinTask> findInProgressRestoreTasks(@Param("userId") Long userId);
+    
+    /**
+     * 根据根节点ID查询任务
+     */
+    @Select("SELECT * FROM recycle_bin_tasks WHERE root_node_id = #{rootNodeId} ORDER BY created_at DESC LIMIT 1")
+    RecycleBinTask findByRootNodeId(@Param("rootNodeId") Long rootNodeId);
+    
+    /**
+     * 查询所有需要重建的任务（用于Redis重建）
+     * 
+     * 需要重建的条件：
+     * 1. operation_type=0（删除任务，在回收站中）- 所有状态都需要重建
+     * 2. operation_type=1（恢复任务）&& (status=0 OR status=2)（进行中或失败）
+     * 3. operation_type=2（彻底删除任务）&& (status=0 OR status=2)（进行中或失败）
+     */
+    @Select("SELECT * FROM recycle_bin_tasks WHERE " +
+            "(operation_type = 0) OR " +
+            "(operation_type IN (1, 2) AND status IN (0, 2)) " +
+            "ORDER BY id ASC")
+    List<RecycleBinTask> findAllIncompleteTasks();
+    
+    /**
+     * 从游标位置后查询需要重建的任务（用于断点续传）
+     * 
+     * @param lastTaskId 上次处理的任务ID
+     * @return 任务列表
+     */
+    @Select("SELECT * FROM recycle_bin_tasks WHERE " +
+            "((operation_type = 0) OR (operation_type IN (1, 2) AND status IN (0, 2))) " +
+            "AND id > #{lastTaskId} ORDER BY id ASC")
+    List<RecycleBinTask> findIncompleteTasksAfterCursor(@Param("lastTaskId") Long lastTaskId);
     
 }

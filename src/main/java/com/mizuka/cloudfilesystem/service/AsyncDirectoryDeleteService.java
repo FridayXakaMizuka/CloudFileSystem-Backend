@@ -47,6 +47,9 @@ public class AsyncDirectoryDeleteService {
     @Autowired
     private com.mizuka.cloudfilesystem.mapper.RecycleBinTaskMapper recycleBinTaskMapper;
     
+    @Autowired
+    private RecycleBinRedisService recycleBinRedisService;
+    
     /**
      * 异步递归删除文件夹（后台任务）
      * 
@@ -164,6 +167,9 @@ public class AsyncDirectoryDeleteService {
             deletedCount++;
             processedNodes++;
             
+            // 注意：旧方法使用 sessionId，不支持 batchId ZSET 存储
+            // recycleBinRedisService.addNodeToBatch(batchId, childFolder.getId());
+            
             // 更新进度和游标位置
             deleteSessionService.updateSessionWithCursor(userId, sessionId, "running", 
                 processedNodes, totalNodes, null, parentFolderId, childFolder.getId());
@@ -212,6 +218,9 @@ public class AsyncDirectoryDeleteService {
                     recycleBinPath + "/" + file.getName(), expiresAt);
                 deletedCount++;
                 processedNodes++;
+                
+                // 注意：旧方法使用 sessionId，不支持 batchId ZSET 存储
+                // recycleBinRedisService.addNodeToBatch(batchId, file.getId());
             }
             
             // 更新进度
@@ -325,6 +334,9 @@ public class AsyncDirectoryDeleteService {
             deletedCount++;
             processedNodes++;
             
+            // 【关键】将节点添加到Redis ZSET，使用 {nodeType}:{nodeId} 格式（0=文件夹）
+            recycleBinRedisService.addNodeToBatch(batchId, childFolder.getId(), 0);
+            
             // 更新进度
             recycleBinTaskMapper.updateProgress(batchId, processedNodes, totalNodes);
             
@@ -367,6 +379,9 @@ public class AsyncDirectoryDeleteService {
             fileNodeMapper.softDeleteFile(file.getId(), fileRecyclePath, expiresAt);
             deletedCount++;
             processedNodes++;
+            
+            // 【关键】将文件节点添加到Redis ZSET，使用 {nodeType}:{nodeId} 格式（1=文件）
+            recycleBinRedisService.addNodeToBatch(batchId, file.getId(), 1);
             
             // 更新进度
             recycleBinTaskMapper.updateProgress(batchId, processedNodes, totalNodes);

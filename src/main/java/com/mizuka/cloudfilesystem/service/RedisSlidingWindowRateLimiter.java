@@ -35,7 +35,7 @@ public class RedisSlidingWindowRateLimiter implements RateLimiterService {
     private DefaultRedisScript<Long> rateLimiterScript;
     
     public RedisSlidingWindowRateLimiter(
-            StringRedisTemplate stringRedisTemplate,
+            @Qualifier("recycleStringRedisTemplate") StringRedisTemplate stringRedisTemplate,
             @Qualifier("deleteRedisCommands") RedisAsyncCommands<String, String> deleteRedisCommands) {
         this.stringRedisTemplate = stringRedisTemplate;
         this.deleteRedisCommands = deleteRedisCommands;
